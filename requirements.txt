@@ -1,0 +1,6 @@
+fastapi[all]>=0.100.0
+sqlalchemy[asyncio]>=2.0.0
+# asyncpg>=0.25.0
+# Für SQLite (asynchron, eingebaut):
+aiosqlite>=0.17.0
+python-dotenv>=1.0.0
