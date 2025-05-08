@@ -1,92 +1,234 @@
-from fastapi import FastAPI, Depends, HTTPException
+import os
+import uuid  # Für eindeutige Dateinamen
+import shutil  # Für Dateioperationen
+from pathlib import Path  # Für Pfadoperationen
+
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+from fastapi.staticfiles import StaticFiles  # Für statische Dateien
+from fastapi.middleware.cors import CORSMiddleware  # Für Frontend-Zugriff
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select # Für neuere SQLAlchemy Select-Syntax
-from sqlalchemy.sql import func # Für SQL-Funktionen wie now()
-import models # Importiere die SQLAlchemy-Modelle
-import schemas # Importiere die Pydantic-Schemas
-from database import get_db_session, create_db_and_tables, engine # Importiere DB-Helfer
+from sqlalchemy.future import select
+from sqlalchemy.sql import func  # Für DateTime Default
+
+import models
+import schemas
+from database import get_db_session, create_db_and_tables, engine
 from contextlib import asynccontextmanager
 
-# --- Lifecycle Events für DB-Initialisierung ---
+UPLOAD_DIR = Path("uploads/images")
+STATIC_FILES_ROUTE = "/static_images"
+
+
+# --- Lifecycle Events (unverändert) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Code hier wird beim Start ausgeführt
     print("Anwendung startet...")
-    # Erstelle DB-Tabellen beim Start (nur wenn sie nicht existieren)
-    # In Produktion besser Migrationstools wie Alembic verwenden!
-    # await create_db_and_tables()
+    # Erstelle Upload-Verzeichnis, falls nicht vorhanden
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"Upload-Verzeichnis sichergestellt: {UPLOAD_DIR.resolve()}")
+    # await create_db_and_tables()  # Nur bei Bedarf einkommentieren
     yield
-    # Code hier wird beim Beenden ausgeführt
     print("Anwendung fährt herunter...")
-    await engine.dispose() # Schließe DB-Verbindungspool
+    await engine.dispose()
+
 
 # --- FastAPI App Instanz ---
-# Füge das Lifespan-Management hinzu
 app = FastAPI(title="Survey Tool Backend", lifespan=lifespan)
+
+# --- CORS Middleware (WICHTIG für Frontend-Zugriff) ---
+origins = [
+    "http://localhost:5173",  # Deine Frontend Dev URL (passe Port ggf. an)
+    # "https://deine-live-frontend-url.com" # Später hinzufügen
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Static Files Mounten, um Bilder auszuliefern
+# Stellt den Inhalt von UPLOAD_DIR unter dem Pfad STATIC_FILES_ROUTE bereit
+app.mount(STATIC_FILES_ROUTE, StaticFiles(directory=UPLOAD_DIR), name="static_images")
+print(
+    f"Statisches Verzeichnis '{UPLOAD_DIR}' wird unter '{STATIC_FILES_ROUTE}' bereitgestellt."
+)
+
 
 # --- API Endpunkte ---
 
-# Einfacher Root-Endpunkt zum Testen
+
 @app.get("/")
 async def read_root():
     return {"message": "Willkommen zum Survey Tool Backend!"}
 
-# NEU: Endpunkt zum Speichern von Umfrageergebnissen
+
+# NEU: Endpunkt für Bild-Upload
+@app.post("/api/upload/image", response_model=schemas.ImageUploadResponse)
+async def upload_image(file: UploadFile = File(...)):
+    """
+    Nimmt eine Bilddatei entgegen, speichert sie im Dateisystem
+    und gibt den relativen Pfad zurück.
+    """
+    # Erlaubte Dateitypen prüfen (Beispiel)
+    allowed_mime_types = ["image/jpeg", "image/png", "image/gif", "image/webp"]
+    if file.content_type not in allowed_mime_types:
+        raise HTTPException(status_code=400, detail="Ungültiger Dateityp.")
+
+    try:
+        # Eindeutigen Dateinamen generieren
+        file_extension = Path(file.filename).suffix
+        unique_filename = f"{uuid.uuid4()}{file_extension}"
+        file_path = UPLOAD_DIR / unique_filename
+        relative_url_path = (
+            f"{STATIC_FILES_ROUTE}/{unique_filename}"  # Pfad für Frontend
+        )
+
+        print(f"Versuche Bild zu speichern unter: {file_path}")
+
+        # Datei speichern (asynchron)
+        with file_path.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        print(f"Bild erfolgreich gespeichert: {file_path}")
+        # Relative URL zurückgeben
+        return schemas.ImageUploadResponse(file_path=relative_url_path)
+
+    except Exception as e:
+        print(f"Fehler beim Speichern des Bildes: {e}")
+        raise HTTPException(status_code=500, detail="Fehler beim Speichern des Bildes.")
+    finally:
+        # Schließe die temporäre Datei (wichtig!)
+        await file.close()
+
+
+# Endpunkt zum Speichern von Umfrageergebnissen (Logik wie zuvor)
 @app.post("/api/results", response_model=schemas.SurveyResultResponse, status_code=201)
 async def save_survey_results(
-    result_data: schemas.SurveyResultCreate,
-    db: AsyncSession = Depends(get_db_session)
+    result_data: schemas.SurveyResultCreate, db: AsyncSession = Depends(get_db_session)
 ):
-    """
-    Nimmt die Umfrageergebnisse vom Frontend entgegen und speichert sie.
-    (Aktuell: Erstellt Teilnehmer und speichert Antworten)
-    """
-    print("Empfangene Ergebnisdaten:", result_data.model_dump()) # model_dump() statt dict()
+    """Speichert Umfrageergebnisse (vereinfacht)."""
+    print("Empfangene Ergebnisdaten:", result_data.model_dump())
+    survey_id_example = 1  # Annahme
 
-    # TODO: Hier müsste die Logik hin, um die Survey ID zu finden,
-    #       falls mehrere Umfragen unterstützt werden.
-    #       Fürs Erste nehmen wir an, es gibt nur eine oder die ID ist bekannt.
-    survey_id_example = 1 # Beispielhafte Annahme
-
-    # 1. Teilnehmer erstellen oder finden
-    # Hier einfache Erstellung, in Realität prüfen, ob Teilnehmer schon existiert (via prolific_pid?)
     new_participant = models.SurveyParticipant(
-        survey_id=survey_id_example, # Annahme
+        survey_id=survey_id_example,
         prolific_pid=result_data.prolific_pid,
         consent_given=result_data.consent_given,
-        completed=True, # Markieren als abgeschlossen beim Speichern
-        end_time=func.now() # Endzeit setzen
-        # start_time wird durch server_default gesetzt
+        completed=True,
+        end_time=func.now(),
     )
     db.add(new_participant)
-    await db.flush() # Spüle, um die ID des Teilnehmers zu bekommen
+    await db.flush()
     await db.refresh(new_participant)
     print(f"Teilnehmer erstellt mit ID: {new_participant.id}")
 
-    # 2. Antworten speichern
     responses_to_add = []
     for question_id_str, value in result_data.answers.items():
         try:
-            question_id = int(question_id_str) # Konvertiere Key zu Integer
+            question_id = int(question_id_str)
             new_response = models.Response(
                 participant_id=new_participant.id,
                 survey_element_id=question_id,
-                response_value=value # Speichert Wert als JSON
+                response_value=value,
             )
             responses_to_add.append(new_response)
         except ValueError:
-            print(f"Warnung: Ungültige Question ID '{question_id_str}' in Antworten übersprungen.")
-            continue # Überspringe ungültige IDs
+            print(f"Warnung: Ungültige Question ID '{question_id_str}' übersprungen.")
+            continue
 
     if responses_to_add:
         db.add_all(responses_to_add)
         print(f"{len(responses_to_add)} Antworten hinzugefügt.")
 
-    # try:
-    #     await db.commit() # Committen am Ende (wird durch get_db_session erledigt)
-    # except Exception as e:
-    #     await db.rollback()
-    #     print(f"Fehler beim Speichern: {e}")
-    #     raise HTTPException(status_code=500, detail="Fehler beim Speichern der Ergebnisse.")
-
     return schemas.SurveyResultResponse(participant_id=new_participant.id)
+
+
+# --- NEU: Endpunkt zum Speichern einer Umfrage-Definition ---
+@app.post("/api/surveys", response_model=schemas.SurveyCreateResponse, status_code=201)
+async def create_survey(
+    survey_in: schemas.SurveyCreate,  # Nimmt Daten gemäß SurveyCreate Schema entgegen
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Erstellt eine neue Umfrage und deren Elemente in der Datenbank.
+    """
+    print("Empfangene Umfragedaten:", survey_in.model_dump())
+
+    # 1. Erstelle den Haupteintrag für die Umfrage
+    new_survey = models.Survey(
+        title=survey_in.survey_title,
+        description=survey_in.survey_description,
+        config=survey_in.config.model_dump(),  # Speichere config als JSON
+    )
+    db.add(new_survey)
+    await db.flush()  # Spüle, um die ID der neuen Umfrage zu bekommen
+    await db.refresh(new_survey)
+    print(f"Survey erstellt mit ID: {new_survey.id}")
+
+    # 2. Erstelle die Elemente (Fragen etc.) und verknüpfe sie
+    elements_to_add = []
+    for element_data in survey_in.questions:
+        # Konvertiere Pydantic-Schema zu Dict für SQLAlchemy-Modell
+        element_dict = element_data.model_dump()
+        # Füge die survey_id hinzu
+        element_dict["survey_id"] = new_survey.id
+        # Erstelle SQLAlchemy-Objekt
+        new_element = models.SurveyElement(**element_dict)
+        elements_to_add.append(new_element)
+
+    if elements_to_add:
+        db.add_all(elements_to_add)
+        print(f"{len(elements_to_add)} Survey-Elemente hinzugefügt.")
+
+    # Commit wird durch get_db_session erledigt
+
+    return schemas.SurveyCreateResponse(survey_id=new_survey.id)
+
+
+# Endpunkt zum Abrufen einer Umfrage-Definition
+@app.get("/api/surveys/{survey_id}", response_model=schemas.SurveyResponse)
+async def get_survey(survey_id: int, db: AsyncSession = Depends(get_db_session)):
+    """
+    Ruft eine spezifische Umfrage und deren Elemente aus der Datenbank ab.
+    """
+    print(f"Rufe Umfrage mit ID {survey_id} ab...")
+    # Query, um die Umfrage und ihre Elemente zu laden
+    # select(models.Survey).options(selectinload(models.Survey.elements)) lädt Elemente effizient mit
+    # Braucht aber Anpassung im Schema oder man macht separate Abfragen
+    result = await db.execute(
+        select(models.Survey).where(models.Survey.id == survey_id)
+    )
+    survey = result.scalar_one_or_none()
+
+    if survey is None:
+        raise HTTPException(status_code=404, detail="Umfrage nicht gefunden")
+
+    # Lade die Elemente separat (einfacher für den Anfang)
+    result_elements = await db.execute(
+        select(models.SurveyElement)
+        .where(models.SurveyElement.survey_id == survey_id)
+        .order_by(models.SurveyElement.page, models.SurveyElement.ordering)  # Sortieren
+    )
+    elements = result_elements.scalars().all()
+
+    # Baue die Antwort zusammen (manuell, da Pydantic verschachtelt ist)
+    # Konvertiere SQLAlchemy-Objekte zu Pydantic-Schemas
+    response_elements = [
+        schemas.SurveyElementResponse.model_validate(el) for el in elements
+    ]
+
+    # Baue das finale SurveyResponse-Objekt
+    survey_response_data = schemas.SurveySchema.model_validate(survey).model_dump()
+    survey_response_data["questions"] = response_elements  # Füge Elemente hinzu
+    survey_response_data["config"] = survey.config or {}  # Füge Config hinzu
+
+    return schemas.SurveyResponse(**survey_response_data)
+
+
+# --- Starten der Anwendung (wie zuvor) ---
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
