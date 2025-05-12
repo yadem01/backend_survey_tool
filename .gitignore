@@ -1,0 +1,37 @@
+# Python Virtual Environment
+venv/
+/venv/
+*.venv
+
+# Bytecode and Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment Variables
+.env
+*.env.*
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+survey_app.db
+
+# Uploaded Files
+uploads/
+/uploads/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files (Beispiele)
+.idea/
+.vscode/
+*.swp
