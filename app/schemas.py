@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 
@@ -29,9 +29,7 @@ class ImageUploadResponse(BaseModel):
     file_path: str
 
 
-# --- NEU: Schemas für Umfrage-Definition ---
-
-
+# --- Schemas für Umfrage-Definition ---
 # Schema für ein einzelnes Element (Frage, Info etc.) beim Erstellen/Empfangen
 class SurveyElementCreate(BaseModel):
     question_text: Optional[str] = None
@@ -98,3 +96,27 @@ class SurveyResponse(SurveyCreate):  # Erbt von Create
 
     class Config:
         from_attributes = True
+
+
+# Schema für einen Listeneintrag einer Umfrage
+class SurveyListItem(BaseModel):
+    id: int
+    title: str
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    element_count: int  # Anzahl der Fragen/Elemente
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# Schema für die Antwort beim Aktualisieren einer Umfrage
+class SurveyUpdateResponse(BaseModel):
+    survey_id: int
+    message: str = "Umfrage erfolgreich aktualisiert."
+
+
+# Schema für die Antwort beim Löschen einer Umfrage
+class SurveyDeleteResponse(BaseModel):
+    survey_id: int
+    message: str = "Umfrage erfolgreich gelöscht."

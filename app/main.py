@@ -2,6 +2,7 @@ import os
 import uuid  # Für eindeutige Dateinamen
 import shutil  # Für Dateioperationen
 from pathlib import Path  # Für Pfadoperationen
+from typing import List  # Für Typannotationen
 
 from fastapi import (
     FastAPI,
@@ -17,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware  # Für Frontend-Zugriff
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.sql import func  # Für DateTime Default
+from sqlalchemy.orm import selectinload  # Für effizientes Laden von Beziehungen
 
 from . import models
 from . import schemas
@@ -214,7 +216,38 @@ async def save_survey_results(
     return schemas.SurveyResultResponse(participant_id=new_participant.id)
 
 
-# Endpunkt zum Speichern einer Umfrage-Definition
+# --- Umfrage-Definitions-Endpunkte ---
+# Endpunkt zum Auflisten aller Umfragen
+@app.get("/api/surveys", response_model=List[schemas.SurveyListItem])
+async def list_surveys(db: AsyncSession = Depends(get_db_session)):
+    """Gibt eine Liste aller Umfragen mit Basisinformationen zurück."""
+    result = await db.execute(
+        select(models.Survey).order_by(models.Survey.updated_at.desc())
+    )
+    surveys = result.scalars().all()
+
+    # Füge die Anzahl der Elemente zu jeder Umfrage hinzu (effizienter wäre eine Subquery oder Join)
+    survey_list_items = []
+    for survey in surveys:
+        count_result = await db.execute(
+            select(func.count(models.SurveyElement.id)).where(
+                models.SurveyElement.survey_id == survey.id
+            )
+        )
+        element_count = count_result.scalar_one()
+        survey_list_items.append(
+            schemas.SurveyListItem(
+                id=survey.id,
+                title=survey.title,
+                description=survey.description,
+                created_at=survey.created_at,
+                updated_at=survey.updated_at,
+                element_count=element_count,
+            )
+        )
+    return survey_list_items
+
+
 @app.post("/api/surveys", response_model=schemas.SurveyCreateResponse, status_code=201)
 async def create_survey(
     survey_in: schemas.SurveyCreate,  # Nimmt Daten gemäß SurveyCreate Schema entgegen
@@ -270,33 +303,131 @@ async def get_survey(survey_id: int, db: AsyncSession = Depends(get_db_session))
     # select(models.Survey).options(selectinload(models.Survey.elements)) lädt Elemente effizient mit
     # Braucht aber Anpassung im Schema oder man macht separate Abfragen
     result = await db.execute(
-        select(models.Survey).where(models.Survey.id == survey_id)
+        select(models.Survey)
+        .options(selectinload(models.Survey.elements))
+        .where(models.Survey.id == survey_id)
     )
     survey = result.scalar_one_or_none()
 
     if survey is None:
         raise HTTPException(status_code=404, detail="Umfrage nicht gefunden")
 
-    # Lade die Elemente separat (einfacher für den Anfang)
-    result_elements = await db.execute(
-        select(models.SurveyElement)
-        .where(models.SurveyElement.survey_id == survey_id)
-        .order_by(models.SurveyElement.page, models.SurveyElement.ordering)  # Sortieren
-    )
-    elements = result_elements.scalars().all()
+    sorted_elements = sorted(survey.elements, key=lambda el: (el.page, el.ordering))
 
-    # Baue die Antwort zusammen (manuell, da Pydantic verschachtelt ist)
-    # Konvertiere SQLAlchemy-Objekte zu Pydantic-Schemas
     response_elements = [
-        schemas.SurveyElementResponse.model_validate(el) for el in elements
+        schemas.SurveyElementResponse.model_validate(el) for el in sorted_elements
     ]
 
-    # Baue das finale SurveyResponse-Objekt
-    survey_response_data = schemas.SurveySchema.model_validate(survey).model_dump()
-    survey_response_data["questions"] = response_elements  # Füge Elemente hinzu
-    survey_response_data["config"] = survey.config or {}  # Füge Config hinzu
+    return schemas.SurveyResponse(
+        id=survey.id,
+        survey_title=survey.title,
+        survey_description=survey.description,
+        config=survey.config or {},  # Stelle sicher, dass config ein Dict ist
+        created_at=survey.created_at,
+        updated_at=survey.updated_at,
+        questions=response_elements,
+    )
 
-    return schemas.SurveyResponse(**survey_response_data)
+
+# Endpunkt zum Aktualisieren einer bestehenden Umfrage
+@app.put("/api/surveys/{survey_id}", response_model=schemas.SurveyUpdateResponse)
+async def update_survey(
+    survey_id: int,
+    survey_in: schemas.SurveyCreate,  # Verwendet das gleiche Schema wie beim Erstellen
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Aktualisiert eine bestehende Umfrage und deren Elemente."""
+    print(f"Aktualisiere Umfrage mit ID {survey_id}...")
+
+    # 1. Umfrage aus DB laden
+    result = await db.execute(
+        select(models.Survey)
+        .options(selectinload(models.Survey.elements))
+        .where(models.Survey.id == survey_id)
+    )
+    db_survey = result.scalar_one_or_none()
+    if db_survey is None:
+        raise HTTPException(status_code=404, detail="Umfrage nicht gefunden")
+
+    # 2. Felder der Umfrage aktualisieren
+    db_survey.title = survey_in.survey_title
+    db_survey.description = survey_in.survey_description
+    db_survey.config = survey_in.config.model_dump()
+    db_survey.updated_at = func.now()  # Aktualisiere Zeitstempel
+
+    # 3. Alte Elemente löschen
+    if db_survey.elements:  # Nur wenn Elemente vorhanden sind
+        print(
+            f"Lösche {len(db_survey.elements)} alte Elemente für Survey ID {survey_id}"
+        )
+        db_survey.elements.clear()
+        await db.flush()
+
+    # 4. Neue Elemente erstellen und hinzufügen
+    elements_to_add = []
+    for element_data in survey_in.questions:
+        element_dict = element_data.model_dump(exclude_unset=True)
+        if "id" in element_dict:
+            del element_dict["id"]  # Entferne Frontend-ID, da DB neue generiert
+
+        element_dict["survey_id"] = survey_id  # Verwende die bestehende survey_id
+        new_element = models.SurveyElement(**element_dict)
+        elements_to_add.append(new_element)
+
+    if elements_to_add:
+        # Füge neue Elemente zur Collection hinzu (SQLAlchemy kümmert sich um das Hinzufügen zur Session)
+        db_survey.elements.extend(elements_to_add)
+        print(f"{len(elements_to_add)} neue Survey-Elemente hinzugefügt.")
+
+    # db.add(db_survey) # Markiere die Umfrage als geändert (SQLAlchemy erkennt das oft automatisch)
+    # Commit wird durch get_db_session erledigt
+
+    background_tasks.add_task(perform_image_cleanup)
+    print(f"Bild-Cleanup-Task für Survey ID {survey_id} im Hintergrund gestartet.")
+
+    return schemas.SurveyUpdateResponse(survey_id=survey_id)
+
+
+# Endpunkt zum Löschen einer Umfrage
+@app.delete("/api/surveys/{survey_id}", response_model=schemas.SurveyDeleteResponse)
+async def delete_survey(
+    survey_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Löscht eine spezifische Umfrage und alle zugehörigen Daten."""
+    print(f"Versuche Umfrage mit ID {survey_id} zu löschen...")
+
+    # 1. Umfrage aus DB laden, um sicherzustellen, dass sie existiert
+    result = await db.execute(
+        select(models.Survey).where(models.Survey.id == survey_id)
+    )
+    db_survey = result.scalar_one_or_none()
+
+    if db_survey is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Umfrage nicht gefunden"
+        )
+
+    # 2. Umfrage löschen
+    # Durch cascade="all, delete-orphan" in den Models werden SurveyElement,
+    # SurveyParticipant und deren Responses automatisch mitgelöscht.
+    await db.delete(db_survey)
+    # Commit wird durch get_db_session erledigt
+    print(f"Umfrage mit ID {survey_id} und zugehörige Daten zum Löschen markiert.")
+
+    # 3. Bild-Cleanup im Hintergrund starten
+    # Wichtig: Der Cleanup-Task läuft, nachdem die DB-Transaktion committed wurde.
+    # Er wird also Bilder löschen, die zu dieser gerade gelöschten Umfrage gehörten.
+    background_tasks.add_task(perform_image_cleanup)
+    print(
+        f"Bild-Cleanup-Task für gelöschte Survey ID {survey_id} im Hintergrund gestartet."
+    )
+
+    return schemas.SurveyDeleteResponse(
+        survey_id=survey_id, message=f"Umfrage {survey_id} erfolgreich gelöscht."
+    )
 
 
 # --- Starten der Anwendung (wie zuvor) ---
