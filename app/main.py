@@ -24,6 +24,7 @@ from . import models
 from . import schemas
 from .database import get_db_session, create_db_and_tables, engine, AsyncSessionFactory
 from contextlib import asynccontextmanager
+import asyncio
 
 # BASE_DIR zeigt jetzt auf den 'app'-Ordner, wenn __file__ aus app/main.py kommt
 # UPLOAD_DIR wird relativ dazu oder absolut definiert.
@@ -33,15 +34,18 @@ UPLOAD_DIR = PROJECT_ROOT_DIR / "uploads/images"
 STATIC_FILES_ROUTE = "/static_images"  # Dieser Pfad bleibt relativ zur Domain
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8000")
 
+# Upload-Verzeichnis direkt beim Import erstellen, vor app.mount
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+print(f"Upload-Verzeichnis (beim Import) sichergestellt: {UPLOAD_DIR.resolve()}")
+
 
 # --- Lifecycle Events (unverändert) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Anwendung startet...")
-    # Erstelle Upload-Verzeichnis, falls nicht vorhanden
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"Upload-Verzeichnis sichergestellt: {UPLOAD_DIR.resolve()}")
-    await create_db_and_tables()  # Nur bei Bedarf einkommentieren
+    print("Initialisiere Datenbanktabellen...")
+    await create_db_and_tables()
+    print("Datenbankinitialisierung abgeschlossen.")
     yield
     print("Anwendung fährt herunter...")
     await engine.dispose()
@@ -52,9 +56,9 @@ app = FastAPI(title="Survey Tool Backend", lifespan=lifespan)
 
 # --- CORS Middleware (WICHTIG für Frontend-Zugriff) ---
 origins = [
-    "http://127.0.0.1:5173",  # Deine Frontend Dev URL (passe Port ggf. an)
+    "http://127.0.0.1:5173",
     "http://localhost:5173",
-    # "https://deine-live-frontend-url.com" # Später hinzufügen
+    "https://survey-tool-vue3.vercel.app",
 ]
 app.add_middleware(
     CORSMiddleware,
