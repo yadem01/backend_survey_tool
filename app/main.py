@@ -158,7 +158,9 @@ async def upload_image(file: UploadFile = File(...)):
         file_extension = Path(file.filename).suffix
         unique_filename = f"{uuid.uuid4()}{file_extension}"
         file_path = UPLOAD_DIR / unique_filename
-        relative_url_path = f"{BACKEND_BASE_URL}{STATIC_FILES_ROUTE}/{unique_filename}"  # Pfad für Frontend
+        relative_url_path = (
+            f"{STATIC_FILES_ROUTE}/{unique_filename}"  # Pfad für Frontend
+        )
 
         print(f"Versuche Bild zu speichern unter: {file_path}")
 
