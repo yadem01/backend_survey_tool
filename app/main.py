@@ -3,20 +3,33 @@ import uuid  # Für eindeutige Dateinamen
 import shutil  # Für Dateioperationen
 from pathlib import Path  # Für Pfadoperationen
 
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
+from fastapi import (
+    FastAPI,
+    Depends,
+    HTTPException,
+    UploadFile,
+    File,
+    status,
+    BackgroundTasks,
+)
 from fastapi.staticfiles import StaticFiles  # Für statische Dateien
 from fastapi.middleware.cors import CORSMiddleware  # Für Frontend-Zugriff
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.sql import func  # Für DateTime Default
 
-import models
-import schemas
-from database import get_db_session, create_db_and_tables, engine
+from . import models
+from . import schemas
+from .database import get_db_session, create_db_and_tables, engine, AsyncSessionFactory
 from contextlib import asynccontextmanager
 
-UPLOAD_DIR = Path("uploads/images")
-STATIC_FILES_ROUTE = "/static_images"
+# BASE_DIR zeigt jetzt auf den 'app'-Ordner, wenn __file__ aus app/main.py kommt
+# UPLOAD_DIR wird relativ dazu oder absolut definiert.
+# Wenn UPLOAD_DIR im Projekt-Root (neben 'app') sein soll
+PROJECT_ROOT_DIR = Path(__file__).resolve().parent
+UPLOAD_DIR = PROJECT_ROOT_DIR / "uploads/images"
+STATIC_FILES_ROUTE = "/static_images"  # Dieser Pfad bleibt relativ zur Domain
+BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8000")
 
 
 # --- Lifecycle Events (unverändert) ---
@@ -26,7 +39,7 @@ async def lifespan(app: FastAPI):
     # Erstelle Upload-Verzeichnis, falls nicht vorhanden
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     print(f"Upload-Verzeichnis sichergestellt: {UPLOAD_DIR.resolve()}")
-    # await create_db_and_tables()  # Nur bei Bedarf einkommentieren
+    await create_db_and_tables()  # Nur bei Bedarf einkommentieren
     yield
     print("Anwendung fährt herunter...")
     await engine.dispose()
@@ -37,7 +50,8 @@ app = FastAPI(title="Survey Tool Backend", lifespan=lifespan)
 
 # --- CORS Middleware (WICHTIG für Frontend-Zugriff) ---
 origins = [
-    "http://localhost:5173",  # Deine Frontend Dev URL (passe Port ggf. an)
+    "http://127.0.0.1:5173",  # Deine Frontend Dev URL (passe Port ggf. an)
+    "http://localhost:5173",
     # "https://deine-live-frontend-url.com" # Später hinzufügen
 ]
 app.add_middleware(
@@ -56,15 +70,72 @@ print(
 )
 
 
+async def perform_image_cleanup():
+    print("Hintergrund-Task: Starte Bild-Cleanup...")
+    deleted_files_list = []
+    message = "Keine verwaisten Bilder zum Löschen gefunden."
+
+    async with AsyncSessionFactory() as session:
+        try:
+            # 1. Alle verwendeten image_urls aus der Datenbank holen
+            stmt = select(models.SurveyElement.image_url).where(
+                models.SurveyElement.image_url.isnot(None)
+            )
+            result = await session.execute(stmt)
+            # Wichtig: Die URLs in der DB sind volle URLs (z.B. http://server/static_images/bild.jpg)
+            used_image_full_urls = {url for (url,) in result.all() if url}
+            print(
+                f"Hintergrund-Task: Verwendete Bild-URLs (aus DB): {len(used_image_full_urls)}"
+            )
+            # if used_image_full_urls: print(f"Beispiel verwendete URL: {list(used_image_full_urls)[0]}")
+
+            # 2. Alle Dateien im Upload-Verzeichnis auflisten
+            if not UPLOAD_DIR.exists():
+                print("Hintergrund-Task: Upload-Verzeichnis nicht gefunden.")
+                return
+
+            stored_files = [f for f in UPLOAD_DIR.iterdir() if f.is_file()]
+            print(
+                f"Hintergrund-Task: Gespeicherte Dateien im Upload-Ordner: {len(stored_files)}"
+            )
+
+            # 3. Vergleichen und Löschen
+            for file_path_obj in stored_files:
+                # Konstruiere die *volle URL*, wie sie in der DB gespeichert sein sollte
+                # basierend auf dem Dateinamen im Upload-Ordner.
+                expected_full_url_in_db = (
+                    f"{BACKEND_BASE_URL}{STATIC_FILES_ROUTE}/{file_path_obj.name}"
+                )
+
+                if expected_full_url_in_db not in used_image_full_urls:
+                    try:
+                        file_path_obj.unlink()
+                        deleted_files_list.append(file_path_obj.name)
+                        print(
+                            f"Hintergrund-Task: Gelöscht (nicht verwendet): {file_path_obj.name} (erwartete URL: {expected_full_url_in_db})"
+                        )
+                    except Exception as e:
+                        print(
+                            f"Hintergrund-Task: Fehler beim Löschen von {file_path_obj.name}: {e}"
+                        )
+                # else:
+                #     print(f"Hintergrund-Task: Behalten (in Verwendung): {file_path_obj.name} (URL: {expected_full_url_in_db})")
+
+            if deleted_files_list:
+                message = f"{len(deleted_files_list)} verwaiste Bilder im Hintergrund gelöscht."
+            print(f"Hintergrund-Task: {message}")
+
+        except Exception as e:
+            print(f"Hintergrund-Task: Schwerwiegender Fehler im Cleanup-Prozess: {e}")
+
+
 # --- API Endpunkte ---
-
-
 @app.get("/")
 async def read_root():
     return {"message": "Willkommen zum Survey Tool Backend!"}
 
 
-# NEU: Endpunkt für Bild-Upload
+# Endpunkt für Bild-Upload
 @app.post("/api/upload/image", response_model=schemas.ImageUploadResponse)
 async def upload_image(file: UploadFile = File(...)):
     """
@@ -81,9 +152,7 @@ async def upload_image(file: UploadFile = File(...)):
         file_extension = Path(file.filename).suffix
         unique_filename = f"{uuid.uuid4()}{file_extension}"
         file_path = UPLOAD_DIR / unique_filename
-        relative_url_path = (
-            f"{STATIC_FILES_ROUTE}/{unique_filename}"  # Pfad für Frontend
-        )
+        relative_url_path = f"{BACKEND_BASE_URL}{STATIC_FILES_ROUTE}/{unique_filename}"  # Pfad für Frontend
 
         print(f"Versuche Bild zu speichern unter: {file_path}")
 
@@ -103,7 +172,7 @@ async def upload_image(file: UploadFile = File(...)):
         await file.close()
 
 
-# Endpunkt zum Speichern von Umfrageergebnissen (Logik wie zuvor)
+# Endpunkt zum Speichern von Umfrageergebnissen
 @app.post("/api/results", response_model=schemas.SurveyResultResponse, status_code=201)
 async def save_survey_results(
     result_data: schemas.SurveyResultCreate, db: AsyncSession = Depends(get_db_session)
@@ -145,10 +214,11 @@ async def save_survey_results(
     return schemas.SurveyResultResponse(participant_id=new_participant.id)
 
 
-# --- NEU: Endpunkt zum Speichern einer Umfrage-Definition ---
+# Endpunkt zum Speichern einer Umfrage-Definition
 @app.post("/api/surveys", response_model=schemas.SurveyCreateResponse, status_code=201)
 async def create_survey(
     survey_in: schemas.SurveyCreate,  # Nimmt Daten gemäß SurveyCreate Schema entgegen
+    background_tasks: BackgroundTasks,  # Für Hintergrund-Tasks
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -182,7 +252,9 @@ async def create_survey(
         db.add_all(elements_to_add)
         print(f"{len(elements_to_add)} Survey-Elemente hinzugefügt.")
 
-    # Commit wird durch get_db_session erledigt
+    # HIER WIRD DER CLEANUP-TASK HINZUGEFÜGT
+    background_tasks.add_task(perform_image_cleanup)
+    print(f"Bild-Cleanup-Task für Survey ID {new_survey.id} im Hintergrund gestartet.")
 
     return schemas.SurveyCreateResponse(survey_id=new_survey.id)
 

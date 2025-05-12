@@ -1,28 +1,26 @@
 import os
+from pathlib import Path
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
 
-# Lade Umgebungsvariablen aus der .env Datei
-load_dotenv()
+# Annahme: .env Datei ist im Hauptverzeichnis des Backends (eine Ebene über 'app')
+dotenv_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=dotenv_path)
 
-# Datenbank-URL aus Umgebungsvariable lesen (Fallback auf SQLite)
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./survey_app.db")
+DEFAULT_SQLITE_PATH = Path(__file__).resolve().parent / "survey_app.db"
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{DEFAULT_SQLITE_PATH}")
 
-# Erstelle die asynchrone SQLAlchemy Engine
-# `echo=True` gibt SQL-Abfragen in der Konsole aus (nützlich für Debugging)
-engine = create_async_engine(DATABASE_URL, echo=True)
+print(f"DEBUG: Using DATABASE_URL: {DATABASE_URL}")  # Debug-Ausgabe für den Pfad
 
-# Erstelle eine Factory für asynchrone Sessions
-# expire_on_commit=False verhindert, dass Objekte nach einem Commit ungültig werden
+engine = create_async_engine(
+    DATABASE_URL, echo=False
+)  # Echo auf False für weniger Logs bei Background-Tasks
 AsyncSessionFactory = sessionmaker(
-    bind=engine,
-    class_=AsyncSession,
-    expire_on_commit=False
+    bind=engine, class_=AsyncSession, expire_on_commit=False
 )
-
-# Basisklasse für deklarative Modelle
 Base = declarative_base()
+
 
 # Hilfsfunktion, um eine Datenbank-Session zu erhalten (Dependency für FastAPI)
 async def get_db_session() -> AsyncSession:
@@ -33,12 +31,13 @@ async def get_db_session() -> AsyncSession:
     async with AsyncSessionFactory() as session:
         try:
             yield session
-            await session.commit() # Änderungen committen, wenn alles gut ging
+            await session.commit()  # Änderungen committen, wenn alles gut ging
         except Exception:
-            await session.rollback() # Rollback bei Fehlern
+            await session.rollback()  # Rollback bei Fehlern
             raise
         finally:
-            await session.close() # Session immer schließen
+            await session.close()  # Session immer schließen
+
 
 # Funktion zum Erstellen der Tabellen (optional, für Initialisierung)
 async def create_db_and_tables():

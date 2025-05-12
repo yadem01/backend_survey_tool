@@ -11,16 +11,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func  # Für Default-Zeitstempel
-from database import Base  # Importiere die Base aus database.py
+from .database import Base  # Importiere die Base aus database.py
 
 
 # Beispiel: Survey Tabelle (vereinfacht)
 class Survey(Base):
     __tablename__ = "surveys"  # Name der Tabelle in der DB
 
-    id = Column(
-        Integer, primary_key=True, index=True, default="Neue Umfrage"
-    )  # Automatisch hochzählend
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     title = Column(String, index=True)
     description = Column(Text, nullable=True)
     config = Column(JSON, nullable=True)
