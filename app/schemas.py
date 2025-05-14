@@ -43,6 +43,8 @@ class SurveyElementCreate(BaseModel):
     paste_disabled: bool = False
     randomization_group: Optional[str] = None
     allow_back_navigation: bool = True
+    llm_assistance_enabled: bool = Field(default=False)
+    maxlength: Optional[int] = None
 
     # Validator, um sicherzustellen, dass question_type gesetzt ist, wenn element_type 'question' ist
     @field_validator("question_type", mode="before")
@@ -120,3 +122,22 @@ class SurveyUpdateResponse(BaseModel):
 class SurveyDeleteResponse(BaseModel):
     survey_id: int
     message: str = "Umfrage erfolgreich gelöscht."
+
+
+# Schemas für LLM-Anbindung
+class LLMRequest(BaseModel):
+    question_text: str = Field(
+        ..., description="Der Text der Umfragefrage, für die KI-Hilfe angefordert wird."
+    )
+    user_input: Optional[str] = Field(
+        "", description="Die bisherige Eingabe des Teilnehmers."
+    )
+    max_length: Optional[int] = Field(
+        None, description="Maximale gewünschte Zeichenlänge für die Antwort."
+    )
+    # model: Optional[str] = "gpt-4o-mini" # Modell könnte hier oder serverseitig fest sein
+
+
+class LLMResponse(BaseModel):
+    generated_text: str
+    model_used: Optional[str] = None  # Um mitzuteilen, welches Modell verwendet wurde

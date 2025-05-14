@@ -54,6 +54,8 @@ class SurveyElement(Base):
     paste_disabled = Column(Boolean, default=False)
     randomization_group = Column(String, nullable=True)
     allow_back_navigation = Column(Boolean, default=True)
+    llm_assistance_enabled = Column(Boolean, default=False)
+    maxlength = Column(Integer, nullable=True)
 
     # Beziehung zurück zu Survey
     survey = relationship("Survey", back_populates="elements")

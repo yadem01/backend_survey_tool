@@ -3,6 +3,7 @@ import uuid  # Für eindeutige Dateinamen
 import shutil  # Für Dateioperationen
 from pathlib import Path  # Für Pfadoperationen
 from typing import List  # Für Typannotationen
+from contextlib import asynccontextmanager
 
 from fastapi import (
     FastAPI,
@@ -20,15 +21,13 @@ from sqlalchemy.future import select
 from sqlalchemy.sql import func  # Für DateTime Default
 from sqlalchemy.orm import selectinload  # Für effizientes Laden von Beziehungen
 
+from openai import AsyncOpenAI
+
 from . import models
 from . import schemas
 from .database import get_db_session, create_db_and_tables, engine, AsyncSessionFactory
-from contextlib import asynccontextmanager
-import asyncio
 
-# BASE_DIR zeigt jetzt auf den 'app'-Ordner, wenn __file__ aus app/main.py kommt
-# UPLOAD_DIR wird relativ dazu oder absolut definiert.
-# Wenn UPLOAD_DIR im Projekt-Root (neben 'app') sein soll
+# --- Konfiguration ---
 PROJECT_ROOT_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = PROJECT_ROOT_DIR / "uploads/images"
 STATIC_FILES_ROUTE = "/static_images"  # Dieser Pfad bleibt relativ zur Domain
@@ -37,6 +36,16 @@ BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8000")
 # Upload-Verzeichnis direkt beim Import erstellen, vor app.mount
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 print(f"Upload-Verzeichnis (beim Import) sichergestellt: {UPLOAD_DIR.resolve()}")
+
+# OpenAI API Key laden
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    print(
+        "WARNUNG: OPENAI_API_KEY nicht in .env gefunden. LLM-Funktionalität wird nicht verfügbar sein."
+    )
+openai_client = None
+if OPENAI_API_KEY:
+    openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 
 # --- Lifecycle Events (unverändert) ---
@@ -434,6 +443,71 @@ async def delete_survey(
     return schemas.SurveyDeleteResponse(
         survey_id=survey_id, message=f"Umfrage {survey_id} erfolgreich gelöscht."
     )
+
+
+# --- Endpunkt für LLM-Textgenerierung ---
+@app.post("/api/llm/generate-text", response_model=schemas.LLMResponse)
+async def generate_llm_text(request_data: schemas.LLMRequest):
+    """
+    Nimmt einen Fragetext und eine Nutzereingabe entgegen,
+    generiert Text mit OpenAI und gibt ihn zurück.
+    """
+    if not openai_client:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="OpenAI API-Schlüssel nicht konfiguriert. LLM-Funktion nicht verfügbar.",
+        )
+
+    print(
+        f"LLM-Anfrage erhalten: Frage='{request_data.question_text[:50]}...', User-Input='{request_data.user_input[:50]}...'"
+    )
+
+    # Standard-Prompt-Struktur
+    # Der Nutzer steuert die KI durch seine `user_input`, die hier als Aufforderung dient.
+    system_prompt = (
+        "You are a helpful assistant who helps users formulate or complete answers to survey questions."
+        "Respond precisely and relevantly to the question and the user's provided notes."
+        "Output your answer in the user's input language."
+    )
+
+    if request_data.max_length and request_data.max_length > 0:
+        system_prompt += f"\n\nImportant note: The answer should not be longer than {request_data.max_length} characters."
+
+    # Kombiniere Fragetext und Nutzereingabe für den User-Prompt
+    # Wenn der Nutzer schon etwas geschrieben hat, wird das als Basis genommen.
+    # Wenn nicht, soll die KI helfen, basierend auf der Frage zu starten.
+    user_prompt_content = f"Frage: {request_data.question_text}\n\n"
+    if request_data.user_input and request_data.user_input.strip():
+        user_prompt_content += f"Meine bisherigen Gedanken/Stichpunkte dazu (bitte vervollständige oder verbessere dies): {request_data.user_input}"
+    else:
+        user_prompt_content += (
+            "Bitte hilf mir, eine Antwort auf diese Frage zu formulieren."
+        )
+
+    try:
+        chat_completion = await openai_client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt_content},
+            ],
+            model="gpt-4.1-nano",  # Wie von dir gewünscht
+            # Weitere Parameter wie temperature, max_tokens etc. könnten hier gesetzt werden
+            # temperature=0.7,
+            # max_tokens=150
+        )
+        generated_text = chat_completion.choices[0].message.content
+        model_used = chat_completion.model
+        print(f"LLM-Antwort von {model_used}: '{generated_text[:100]}...'")
+        return schemas.LLMResponse(
+            generated_text=generated_text.strip(), model_used=model_used
+        )
+
+    except Exception as e:
+        print(f"Fehler bei der OpenAI API-Anfrage: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Fehler bei der Kommunikation mit dem LLM: {str(e)}",
+        )
 
 
 # --- Starten der Anwendung (wie zuvor) ---
