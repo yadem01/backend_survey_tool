@@ -125,19 +125,20 @@ class SurveyDeleteResponse(BaseModel):
 
 
 # Schemas für LLM-Anbindung
+class ChatMessage(BaseModel):
+    role: str  # "user" oder "assistant"
+    content: str
+
+
 class LLMRequest(BaseModel):
     question_text: str = Field(
-        ..., description="Der Text der Umfragefrage, für die KI-Hilfe angefordert wird."
+        ..., description="Der ursprüngliche Text der Umfragefrage."
     )
-    user_input: Optional[str] = Field(
-        "", description="Die bisherige Eingabe des Teilnehmers."
+    chat_history: List[ChatMessage] = Field(
+        default_factory=list, description="Der bisherige Chatverlauf."
     )
-    max_length: Optional[int] = Field(
-        None, description="Maximale gewünschte Zeichenlänge für die Antwort."
-    )
-    # model: Optional[str] = "gpt-4o-mini" # Modell könnte hier oder serverseitig fest sein
 
 
 class LLMResponse(BaseModel):
     generated_text: str
-    model_used: Optional[str] = None  # Um mitzuteilen, welches Modell verwendet wurde
+    model_used: Optional[str] = None

@@ -459,44 +459,52 @@ async def generate_llm_text(request_data: schemas.LLMRequest):
         )
 
     print(
-        f"LLM-Anfrage erhalten: Frage='{request_data.question_text[:50]}...', User-Input='{request_data.user_input[:50]}...'"
+        f"LLM-Chat-Anfrage: Frage='{request_data.question_text[:50]}...', History-Länge='{len(request_data.chat_history)}'"
     )
 
     # Standard-Prompt-Struktur
     # Der Nutzer steuert die KI durch seine `user_input`, die hier als Aufforderung dient.
     system_prompt = (
-        "You are a helpful assistant who helps users formulate or complete answers to survey questions."
-        "Respond precisely and relevantly to the question and the user's provided notes."
-        "Output your answer in the user's input language."
+        f"You are a helpful assistant. The original survey question is: '{request_data.question_text}'. "
+        "Based on the following chat history, formulate or complete the user's answer. "
+        "Respond precisely and relevantly. Output your answer in the user's input language."
     )
 
-    if request_data.max_length and request_data.max_length > 0:
-        system_prompt += f"\n\nImportant note: The answer should not be longer than {request_data.max_length} characters."
+    messages_for_openai = [{"role": "system", "content": system_prompt}]
 
-    # Kombiniere Fragetext und Nutzereingabe für den User-Prompt
-    # Wenn der Nutzer schon etwas geschrieben hat, wird das als Basis genommen.
-    # Wenn nicht, soll die KI helfen, basierend auf der Frage zu starten.
-    user_prompt_content = f"Frage: {request_data.question_text}\n\n"
-    if request_data.user_input and request_data.user_input.strip():
-        user_prompt_content += f"Meine bisherigen Gedanken/Stichpunkte dazu (bitte vervollständige oder verbessere dies): {request_data.user_input}"
-    else:
-        user_prompt_content += (
-            "Bitte hilf mir, eine Antwort auf diese Frage zu formulieren."
-        )
+    # Interaktionslimit: Nimm die letzten N Nachrichten
+    MAX_CHAT_HISTORY_PAIRS = 10  # 10 User + 10 Assistant = 20 Nachrichten
+
+    start_index = max(0, len(request_data.chat_history) - (MAX_CHAT_HISTORY_PAIRS * 2))
+    limited_chat_history = request_data.chat_history[start_index:]
+
+    for msg in limited_chat_history:
+        messages_for_openai.append({"role": msg.role, "content": msg.content})
 
     try:
+        print(
+            f"Sende an OpenAI (gpt-4o-mini) mit {len(messages_for_openai)} Nachrichten..."
+        )
         chat_completion = await openai_client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt_content},
-            ],
-            model="gpt-4.1-nano",  # Wie von dir gewünscht
+            messages=messages_for_openai,
+            model="gpt-4.1-nano",
             # Weitere Parameter wie temperature, max_tokens etc. könnten hier gesetzt werden
             # temperature=0.7,
             # max_tokens=150
         )
         generated_text = chat_completion.choices[0].message.content
         model_used = chat_completion.model
+
+        # Token-Nutzung loggen
+        if chat_completion.usage:
+            print(
+                f"OpenAI Token-Nutzung: Prompt Tokens={chat_completion.usage.prompt_tokens}, "
+                f"Completion Tokens={chat_completion.usage.completion_tokens}, "
+                f"Total Tokens={chat_completion.usage.total_tokens}"
+            )
+        else:
+            print("OpenAI Token-Nutzung: Nicht in Antwort enthalten.")
+
         print(f"LLM-Antwort von {model_used}: '{generated_text[:100]}...'")
         return schemas.LLMResponse(
             generated_text=generated_text.strip(), model_used=model_used
