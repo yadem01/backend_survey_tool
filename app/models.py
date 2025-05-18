@@ -65,10 +65,12 @@ class SurveyParticipant(Base):
     __tablename__ = "survey_participants"
     id = Column(Integer, primary_key=True, index=True)
     survey_id = Column(Integer, ForeignKey("surveys.id"))
-    prolific_pid = Column(
-        String, unique=True, index=True, nullable=True
-    )  # Eindeutig pro Studie?
-    # ... andere Felder wie consent_given, completed, start_time, end_time ...
+
+    # Felder für Prolific Integration
+    prolific_pid = Column(String, unique=True, index=True, nullable=True)
+    study_id = Column(String, index=True, nullable=True)  # Prolific Study ID
+    session_id = Column(String, index=True, nullable=True)  # Prolific Session ID
+
     start_time = Column(DateTime(timezone=True), server_default=func.now())
     end_time = Column(DateTime(timezone=True), nullable=True)
     consent_given = Column(Boolean, default=False)
@@ -91,6 +93,8 @@ class Response(Base):
         JSON
     )  # Antwort als JSON speichern (flexibel für Text, Array etc.)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    llm_chat_history = Column(JSON, nullable=True)
 
     participant = relationship("SurveyParticipant", back_populates="responses")
     # Optional: Beziehung zu SurveyElement, falls benötigt

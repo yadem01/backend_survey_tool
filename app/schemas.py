@@ -3,6 +3,26 @@ from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 
 
+# Schemas für LLM-Anbindung
+class ChatMessage(BaseModel):
+    role: str  # "user" oder "assistant"
+    content: str
+
+
+class LLMRequest(BaseModel):
+    question_text: str = Field(
+        ..., description="Der ursprüngliche Text der Umfragefrage."
+    )
+    chat_history: List[ChatMessage] = Field(
+        default_factory=list, description="Der bisherige Chatverlauf."
+    )
+
+
+class LLMResponse(BaseModel):
+    generated_text: str
+    model_used: Optional[str] = None
+
+
 # Basismodell für eine Antwort (wie sie vom Frontend kommen könnte)
 class AnswerBase(BaseModel):
     question_id: int
@@ -16,6 +36,10 @@ class SurveyResultCreate(BaseModel):
     session_id: Optional[str] = None
     consent_given: bool
     answers: Dict[str, Union[str, List[str], int, float, bool, None]]
+    llm_chat_histories: Optional[Dict[str, List[ChatMessage]]] = Field(
+        default_factory=dict
+    )
+    participant_start_time: Optional[datetime] = None
 
 
 # Modell für die Antwort nach erfolgreichem Speichern (Beispiel)
@@ -122,23 +146,3 @@ class SurveyUpdateResponse(BaseModel):
 class SurveyDeleteResponse(BaseModel):
     survey_id: int
     message: str = "Umfrage erfolgreich gelöscht."
-
-
-# Schemas für LLM-Anbindung
-class ChatMessage(BaseModel):
-    role: str  # "user" oder "assistant"
-    content: str
-
-
-class LLMRequest(BaseModel):
-    question_text: str = Field(
-        ..., description="Der ursprüngliche Text der Umfragefrage."
-    )
-    chat_history: List[ChatMessage] = Field(
-        default_factory=list, description="Der bisherige Chatverlauf."
-    )
-
-
-class LLMResponse(BaseModel):
-    generated_text: str
-    model_used: Optional[str] = None

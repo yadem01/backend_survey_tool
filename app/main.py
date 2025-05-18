@@ -2,7 +2,7 @@ import os
 import uuid  # Für eindeutige Dateinamen
 import shutil  # Für Dateioperationen
 from pathlib import Path  # Für Pfadoperationen
-from typing import List  # Für Typannotationen
+from typing import List, Optional  # Für Typannotationen
 from contextlib import asynccontextmanager
 
 from fastapi import (
@@ -190,44 +190,109 @@ async def upload_image(file: UploadFile = File(...)):
 
 
 # Endpunkt zum Speichern von Umfrageergebnissen
-@app.post("/api/results", response_model=schemas.SurveyResultResponse, status_code=201)
+@app.post(
+    "/api/results",
+    response_model=schemas.SurveyResultResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def save_survey_results(
     result_data: schemas.SurveyResultCreate, db: AsyncSession = Depends(get_db_session)
 ):
-    """Speichert Umfrageergebnisse (vereinfacht)."""
-    print("Empfangene Ergebnisdaten:", result_data.model_dump())
-    survey_id_example = 1  # Annahme
+    """
+    Speichert die Ergebnisse einer Umfrageteilnahme, inklusive der Antworten
+    und der LLM-Chat-Verläufe pro Frage.
+    """
+    print("Empfangene Ergebnisdaten (Auszug):")
+    print(f"  Prolific PID: {result_data.prolific_pid}")
+    print(f"  Consent Given: {result_data.consent_given}")
+    print(f"  Anzahl Antworten: {len(result_data.answers)}")
+    print(
+        f"  Anzahl Chat-Verläufe: {len(result_data.llm_chat_histories if result_data.llm_chat_histories else [])}"
+    )
 
+    survey_id_extracted = None
+    # Ermittlung der survey_id
+    if result_data.answers:
+        first_answer_element_id_str = next(iter(result_data.answers))
+        first_answer_element_id = int(first_answer_element_id_str)
+        element_stmt = await db.execute(
+            select(models.SurveyElement.survey_id).where(
+                models.SurveyElement.id == first_answer_element_id
+            )
+        )
+        survey_id_from_element = element_stmt.scalar_one_or_none()
+        if survey_id_from_element:
+            survey_id_extracted = survey_id_from_element
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Survey für Element ID {first_answer_element_id_str} nicht gefunden.",
+            )
+    else:
+        raise HTTPException(
+            status_code=400, detail="Keine Antworten zum Speichern vorhanden."
+        )
+
+    participant_start_time_to_use = result_data.participant_start_time or func.now()
+
+    # 1. Erstelle den Teilnehmer-Eintrag
     new_participant = models.SurveyParticipant(
-        survey_id=survey_id_example,
+        survey_id=survey_id_extracted,
         prolific_pid=result_data.prolific_pid,
+        study_id=result_data.study_id,  # study_id hinzugefügt
+        session_id=result_data.session_id,  # session_id hinzugefügt
         consent_given=result_data.consent_given,
-        completed=True,
-        end_time=func.now(),
+        start_time=participant_start_time_to_use,
+        end_time=func.now(),  # Aktuelle Zeit als Endzeit
+        completed=True,  # Annahme: Wenn Ergebnisse gesendet werden, ist die Umfrage abgeschlossen
     )
     db.add(new_participant)
-    await db.flush()
+    await db.flush()  # Um die ID des neuen Teilnehmers zu erhalten
     await db.refresh(new_participant)
     print(f"Teilnehmer erstellt mit ID: {new_participant.id}")
 
+    # 2. Speichere die einzelnen Antworten und zugehörige Chat-Verläufe
     responses_to_add = []
-    for question_id_str, value in result_data.answers.items():
+    for survey_element_id_str, answer_value in result_data.answers.items():
         try:
-            question_id = int(question_id_str)
-            new_response = models.Response(
-                participant_id=new_participant.id,
-                survey_element_id=question_id,
-                response_value=value,
-            )
-            responses_to_add.append(new_response)
+            survey_element_id = int(
+                survey_element_id_str
+            )  # Konvertiere ID-String zu Integer
         except ValueError:
-            print(f"Warnung: Ungültige Question ID '{question_id_str}' übersprungen.")
+            print(
+                f"WARNUNG: Ungültige survey_element_id '{survey_element_id_str}' in answers übersprungen."
+            )
             continue
+
+        # Hole den zugehörigen Chat-Verlauf, falls vorhanden
+        chat_history_for_element = None
+        if (
+            result_data.llm_chat_histories
+            and survey_element_id_str in result_data.llm_chat_histories
+        ):
+            chat_history_for_element = [
+                chat_msg.model_dump()
+                for chat_msg in result_data.llm_chat_histories[survey_element_id_str]
+            ]
+            print(
+                f"  Chat-Verlauf für Element {survey_element_id_str} gefunden ({len(chat_history_for_element)} Nachrichten)."
+            )
+
+        new_response = models.Response(
+            participant_id=new_participant.id,
+            survey_element_id=survey_element_id,
+            response_value=answer_value,  # Antwortwert direkt speichern (kann str, list, int etc. sein)
+            llm_chat_history=chat_history_for_element,  # Füge den Chat-Verlauf hinzu (oder None)
+        )
+        responses_to_add.append(new_response)
 
     if responses_to_add:
         db.add_all(responses_to_add)
-        print(f"{len(responses_to_add)} Antworten hinzugefügt.")
+        print(f"{len(responses_to_add)} Antworten zur Datenbank hinzugefügt.")
+    else:
+        print("Keine gültigen Antworten zum Speichern gefunden.")
 
+    # Commit der Transaktion erfolgt durch die `get_db_session` Dependency
     return schemas.SurveyResultResponse(participant_id=new_participant.id)
 
 
