@@ -27,6 +27,14 @@ from . import models
 from . import schemas
 from .database import get_db_session, create_db_and_tables, engine, AsyncSessionFactory
 
+# --- Admin Konfiguration ---
+# Beispiel für .env:
+# ADMIN_USERNAME="admin"
+# ADMIN_PASSWORD="password"
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "secret")
+
+
 # --- Konfiguration ---
 PROJECT_ROOT_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = PROJECT_ROOT_DIR / "uploads/images"
@@ -150,6 +158,46 @@ async def read_root():
     return {"message": "Willkommen zum Survey Tool Backend!"}
 
 
+# --- Admin Login Endpunkt ---
+@app.post("/api/admin/login", response_model=schemas.Token)
+async def login_for_admin_access_token(admin_credentials: schemas.AdminLoginRequest):
+    """
+    Authentifiziert einen Admin anhand der übergebenen Zugangsdaten.
+    Gibt bei Erfolg ein einfaches Token zurück.
+    Momentan werden hartkodierte Zugangsdaten verwendet (aus Umgebungsvariablen geladen).
+    """
+    # Vergleiche die übergebenen Credentials mit den konfigurierten Admin-Daten
+    # In einer echten Anwendung: Passwort-Vergleich mit gehashten Passwörtern aus der DB
+    is_correct_username = admin_credentials.username == ADMIN_USERNAME
+    is_correct_password = (
+        admin_credentials.password == ADMIN_PASSWORD
+    )  # Direkter Vergleich nur für Demo!
+
+    if not (is_correct_username and is_correct_password):
+        print(
+            f"Fehlgeschlagener Admin-Login-Versuch für Benutzer: '{admin_credentials.username}'"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Ungültiger Benutzername oder Passwort",
+            headers={
+                "WWW-Authenticate": "Bearer"
+            },  # Standard-Header für Token-basierte Auth
+        )
+
+    # Erzeuge ein einfaches Token. Für eine echte Anwendung sollte hier ein JWT erstellt werden.
+    # Beispiel: access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    # access_token = create_access_token(data={"sub": ADMIN_USERNAME}, expires_delta=access_token_expires)
+
+    # Für diese Phase: Ein statisches oder sehr einfaches "Token"
+    # Dieses Token dient im Frontend nur als Indikator, dass der Login erfolgreich war.
+    # Es wird serverseitig (noch) nicht für die Autorisierung von Endpunkten validiert.
+    access_token = f"static-admin-token-for-{ADMIN_USERNAME}"
+
+    print(f"Admin '{admin_credentials.username}' erfolgreich eingeloggt.")
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
 # Endpunkt für Bild-Upload
 @app.post("/api/upload/image", response_model=schemas.ImageUploadResponse)
 async def upload_image(file: UploadFile = File(...)):
@@ -202,13 +250,13 @@ async def save_survey_results(
     Speichert die Ergebnisse einer Umfrageteilnahme, inklusive der Antworten
     und der LLM-Chat-Verläufe pro Frage.
     """
-    print("Empfangene Ergebnisdaten (Auszug):")
-    print(f"  Prolific PID: {result_data.prolific_pid}")
-    print(f"  Consent Given: {result_data.consent_given}")
-    print(f"  Anzahl Antworten: {len(result_data.answers)}")
-    print(
-        f"  Anzahl Chat-Verläufe: {len(result_data.llm_chat_histories if result_data.llm_chat_histories else [])}"
-    )
+    # print("Empfangene Ergebnisdaten (Auszug):")
+    # print(f"  Prolific PID: {result_data.prolific_pid}")
+    # print(f"  Consent Given: {result_data.consent_given}")
+    # print(f"  Anzahl Antworten: {len(result_data.answers)}")
+    # print(
+    #     f"  Anzahl Chat-Verläufe: {len(result_data.llm_chat_histories if result_data.llm_chat_histories else [])}"
+    # )
 
     survey_id_extracted = None
     # Ermittlung der survey_id
@@ -323,6 +371,7 @@ async def list_surveys(db: AsyncSession = Depends(get_db_session)):
                 created_at=survey.created_at,
                 updated_at=survey.updated_at,
                 element_count=element_count,
+                prolific_enabled=survey.prolific_enabled,
             )
         )
     return survey_list_items
@@ -344,6 +393,8 @@ async def create_survey(
         title=survey_in.survey_title,
         description=survey_in.survey_description,
         config=survey_in.config.model_dump(),  # Speichere config als JSON
+        prolific_enabled=survey_in.prolific_enabled,
+        prolific_completion_url=survey_in.prolific_completion_url,
     )
     db.add(new_survey)
     await db.flush()  # Spüle, um die ID der neuen Umfrage zu bekommen
@@ -406,6 +457,8 @@ async def get_survey(survey_id: int, db: AsyncSession = Depends(get_db_session))
         created_at=survey.created_at,
         updated_at=survey.updated_at,
         questions=response_elements,
+        prolific_enabled=getattr(survey, "prolific_enabled", False),
+        prolific_completion_url=getattr(survey, "prolific_completion_url", None),
     )
 
 

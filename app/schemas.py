@@ -95,6 +95,8 @@ class SurveyCreate(BaseModel):
         default_factory=SurveyConfigCreate
     )  # Default verwenden
     questions: List[SurveyElementCreate] = []  # Liste der Elemente
+    prolific_enabled: bool = Field(default=False)
+    prolific_completion_url: Optional[str] = None
 
 
 # Schema für die Antwort nach dem Erstellen einer Umfrage
@@ -132,6 +134,7 @@ class SurveyListItem(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
     element_count: int  # Anzahl der Fragen/Elemente
+    prolific_enabled: bool = Field(default=False)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -146,3 +149,20 @@ class SurveyUpdateResponse(BaseModel):
 class SurveyDeleteResponse(BaseModel):
     survey_id: int
     message: str = "Umfrage erfolgreich gelöscht."
+
+
+# --- Schemas für Admin Login ---
+
+
+class AdminLoginRequest(BaseModel):
+    """Schema für die Admin-Login-Anfrage."""
+
+    username: str
+    password: str
+
+
+class Token(BaseModel):
+    """Schema für das Access Token."""
+
+    access_token: str
+    token_type: str  # Üblicherweise "bearer"

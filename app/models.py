@@ -27,6 +27,9 @@ class Survey(Base):
         DateTime(timezone=True), onupdate=func.now(), server_default=func.now()
     )
 
+    prolific_enabled = Column(Boolean, default=False)
+    prolific_completion_url = Column(String, nullable=True)
+
     # Beziehung zu SurveyElement (eine Umfrage hat viele Elemente)
     elements = relationship(
         "SurveyElement", back_populates="survey", cascade="all, delete-orphan"
@@ -97,4 +100,3 @@ class Response(Base):
     llm_chat_history = Column(JSON, nullable=True)
 
     participant = relationship("SurveyParticipant", back_populates="responses")
-    # Optional: Beziehung zu SurveyElement, falls benötigt
