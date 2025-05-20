@@ -19,7 +19,10 @@ from fastapi.middleware.cors import CORSMiddleware  # Für Frontend-Zugriff
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.sql import func  # Für DateTime Default
-from sqlalchemy.orm import selectinload  # Für effizientes Laden von Beziehungen
+from sqlalchemy.orm import selectinload, joinedload
+
+from fastapi.security import OAuth2PasswordBearer
+from fastapi import Header
 
 from openai import AsyncOpenAI
 
@@ -27,12 +30,14 @@ from . import models
 from . import schemas
 from .database import get_db_session, create_db_and_tables, engine, AsyncSessionFactory
 
+
 # --- Admin Konfiguration ---
 # Beispiel für .env:
 # ADMIN_USERNAME="admin"
 # ADMIN_PASSWORD="password"
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "secret")
+EXPECTED_ADMIN_TOKEN = f"static-admin-token-for-{ADMIN_USERNAME}"
 
 
 # --- Konfiguration ---
@@ -152,6 +157,49 @@ async def perform_image_cleanup():
             print(f"Hintergrund-Task: Schwerwiegender Fehler im Cleanup-Prozess: {e}")
 
 
+# --- Dependency-Funktion zur Admin-Token-Verifizierung ---
+async def verify_admin_token(authorization: Optional[str] = Header(None)):
+    """
+    Überprüft das Admin-Token im Authorization-Header.
+    Für diese Phase wird ein einfaches, statisches Token erwartet.
+    """
+    if authorization is None:
+        print("Admin-Zugriff verweigert: Kein Authorization-Header.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Nicht autorisiert: Token erforderlich.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    parts = authorization.split()
+    # Erwartetes Format: "Bearer <token>"
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        print(
+            f"Admin-Zugriff verweigert: Ungültiges Token-Format im Header: {authorization}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Ungültiges Token-Format. Erwartet: 'Bearer <token>'",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = parts[1]
+    if token == EXPECTED_ADMIN_TOKEN:
+        # Token ist gültig (für diesen einfachen Fall)
+        print(f"Admin-Token verifiziert für Benutzer: {ADMIN_USERNAME}")
+        return {
+            "username": ADMIN_USERNAME,
+            "token_status": "verified",
+        }  # Gibt ein einfaches Objekt zurück
+    else:
+        print(f"Admin-Zugriff verweigert: Ungültiges Token empfangen: {token}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Ungültiges oder abgelaufenes Token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 # --- API Endpunkte ---
 @app.get("/")
 async def read_root():
@@ -161,41 +209,22 @@ async def read_root():
 # --- Admin Login Endpunkt ---
 @app.post("/api/admin/login", response_model=schemas.Token)
 async def login_for_admin_access_token(admin_credentials: schemas.AdminLoginRequest):
-    """
-    Authentifiziert einen Admin anhand der übergebenen Zugangsdaten.
-    Gibt bei Erfolg ein einfaches Token zurück.
-    Momentan werden hartkodierte Zugangsdaten verwendet (aus Umgebungsvariablen geladen).
-    """
-    # Vergleiche die übergebenen Credentials mit den konfigurierten Admin-Daten
-    # In einer echten Anwendung: Passwort-Vergleich mit gehashten Passwörtern aus der DB
-    is_correct_username = admin_credentials.username == ADMIN_USERNAME
-    is_correct_password = (
-        admin_credentials.password == ADMIN_PASSWORD
-    )  # Direkter Vergleich nur für Demo!
-
-    if not (is_correct_username and is_correct_password):
+    if (
+        admin_credentials.username == ADMIN_USERNAME
+        and admin_credentials.password == ADMIN_PASSWORD
+    ):
+        access_token = EXPECTED_ADMIN_TOKEN  # Verwende das definierte erwartete Token
+        print(f"Admin '{admin_credentials.username}' erfolgreich eingeloggt.")
+        return {"access_token": access_token, "token_type": "bearer"}
+    else:
         print(
-            f"Fehlgeschlagener Admin-Login-Versuch für Benutzer: '{admin_credentials.username}'"
+            f"Fehlgeschlagener Admin-Login für Benutzer: '{admin_credentials.username}'"
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Ungültiger Benutzername oder Passwort",
-            headers={
-                "WWW-Authenticate": "Bearer"
-            },  # Standard-Header für Token-basierte Auth
+            headers={"WWW-Authenticate": "Bearer"},
         )
-
-    # Erzeuge ein einfaches Token. Für eine echte Anwendung sollte hier ein JWT erstellt werden.
-    # Beispiel: access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    # access_token = create_access_token(data={"sub": ADMIN_USERNAME}, expires_delta=access_token_expires)
-
-    # Für diese Phase: Ein statisches oder sehr einfaches "Token"
-    # Dieses Token dient im Frontend nur als Indikator, dass der Login erfolgreich war.
-    # Es wird serverseitig (noch) nicht für die Autorisierung von Endpunkten validiert.
-    access_token = f"static-admin-token-for-{ADMIN_USERNAME}"
-
-    print(f"Admin '{admin_credentials.username}' erfolgreich eingeloggt.")
-    return {"access_token": access_token, "token_type": "bearer"}
 
 
 # Endpunkt für Bild-Upload
@@ -382,11 +411,14 @@ async def create_survey(
     survey_in: schemas.SurveyCreate,  # Nimmt Daten gemäß SurveyCreate Schema entgegen
     background_tasks: BackgroundTasks,  # Für Hintergrund-Tasks
     db: AsyncSession = Depends(get_db_session),
+    admin_user: dict = Depends(verify_admin_token),
 ):
     """
     Erstellt eine neue Umfrage und deren Elemente in der Datenbank.
     """
-    print("Empfangene Umfragedaten:", survey_in.model_dump())
+    print(
+        f"Admin '{admin_user['username']}' erstellt eine neue Umfrage: '{survey_in.survey_title}'"
+    )
 
     # 1. Erstelle den Haupteintrag für die Umfrage
     new_survey = models.Survey(
@@ -469,9 +501,10 @@ async def update_survey(
     survey_in: schemas.SurveyCreate,  # Verwendet das gleiche Schema wie beim Erstellen
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db_session),
+    admin_user: dict = Depends(verify_admin_token),
 ):
     """Aktualisiert eine bestehende Umfrage und deren Elemente."""
-    print(f"Aktualisiere Umfrage mit ID {survey_id}...")
+    print(f"Admin '{admin_user['username']}' aktualisiert Umfrage ID: {survey_id}")
 
     # 1. Umfrage aus DB laden
     result = await db.execute(
@@ -528,9 +561,10 @@ async def delete_survey(
     survey_id: int,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db_session),
+    admin_user: dict = Depends(verify_admin_token),
 ):
     """Löscht eine spezifische Umfrage und alle zugehörigen Daten."""
-    print(f"Versuche Umfrage mit ID {survey_id} zu löschen...")
+    print(f"Admin '{admin_user['username']}' löscht Umfrage ID: {survey_id}")
 
     # 1. Umfrage aus DB laden, um sicherzustellen, dass sie existiert
     result = await db.execute(
@@ -560,6 +594,92 @@ async def delete_survey(
 
     return schemas.SurveyDeleteResponse(
         survey_id=survey_id, message=f"Umfrage {survey_id} erfolgreich gelöscht."
+    )
+
+
+# --- ENDPUNKT FÜR ADMIN ERGEBNISANSICHT ---
+@app.get(
+    "/api/admin/surveys/{survey_id}/results",
+    response_model=schemas.SurveyResultsAdminResponse,
+)
+async def get_survey_results_for_admin(
+    survey_id: int,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: dict = Depends(verify_admin_token),
+):
+    print(
+        f"Admin '{admin_user['username']}' fordert Ergebnisse für Survey ID {survey_id} an."
+    )
+
+    survey_stmt = select(models.Survey).where(models.Survey.id == survey_id)
+    survey_result = await db.execute(survey_stmt)
+    survey = survey_result.scalar_one_or_none()
+
+    if not survey:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Umfrage nicht gefunden"
+        )
+
+    # Lade alle SurveyElements für diese Umfrage einmal, um sie später zuzuordnen
+    elements_stmt = select(models.SurveyElement).where(
+        models.SurveyElement.survey_id == survey_id
+    )
+    elements_result = await db.execute(elements_stmt)
+    survey_elements_list = elements_result.scalars().all()
+    elements_map = {el.id: el for el in survey_elements_list}
+
+    participants_stmt = (
+        select(models.SurveyParticipant)
+        .where(models.SurveyParticipant.survey_id == survey_id)
+        .options(selectinload(models.SurveyParticipant.responses))
+        .order_by(models.SurveyParticipant.start_time.desc())
+    )
+    participants_result = await db.execute(participants_stmt)
+    db_participants = participants_result.scalars().all()
+
+    participant_details_list: List[schemas.ParticipantResultDetail] = []
+    for p in db_participants:
+        answer_details_list: List[schemas.AnswerDetail] = []
+        for resp in p.responses:
+            # Finde das zugehörige SurveyElement aus der vorgeladenen Map
+            survey_element = elements_map.get(resp.survey_element_id)
+
+            answer_details_list.append(
+                schemas.AnswerDetail(
+                    survey_element_id=resp.survey_element_id,
+                    element_type=survey_element.element_type
+                    if survey_element
+                    else "N/A",
+                    question_type=survey_element.question_type
+                    if survey_element
+                    else None,
+                    question_text=survey_element.question_text
+                    if survey_element
+                    else "Fragetext nicht gefunden",
+                    response_value=resp.response_value,
+                    llm_chat_history=resp.llm_chat_history,
+                )
+            )
+
+        participant_details_list.append(
+            schemas.ParticipantResultDetail(
+                participant_id=p.id,
+                prolific_pid=p.prolific_pid,
+                study_id=p.study_id,
+                session_id=p.session_id,
+                start_time=p.start_time,
+                end_time=p.end_time,
+                consent_given=p.consent_given,
+                completed=p.completed,
+                responses=answer_details_list,
+            )
+        )
+
+    return schemas.SurveyResultsAdminResponse(
+        survey_id=survey.id,
+        survey_title=survey.title,
+        total_participants=len(db_participants),
+        participants=participant_details_list,
     )
 
 

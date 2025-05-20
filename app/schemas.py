@@ -166,3 +166,43 @@ class Token(BaseModel):
 
     access_token: str
     token_type: str  # Üblicherweise "bearer"
+
+
+class AnswerDetail(BaseModel):
+    """Detail einer einzelnen Antwort für die Admin-Ansicht."""
+
+    survey_element_id: int
+    element_type: str
+    response_value: Optional[Any] = None
+    llm_chat_history: Optional[List[ChatMessage]] = None
+    question_text: Optional[str] = None
+    question_type: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ParticipantResultDetail(BaseModel):
+    """Details eines Teilnehmers und seiner Antworten."""
+
+    participant_id: int
+    prolific_pid: Optional[str] = None
+    study_id: Optional[str] = None
+    session_id: Optional[str] = None
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    consent_given: bool
+    completed: bool
+    responses: List[AnswerDetail] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SurveyResultsAdminResponse(BaseModel):
+    """Gesamte Ergebnisübersicht für eine Umfrage für den Admin."""
+
+    survey_id: int
+    survey_title: str
+    total_participants: int
+    participants: List[ParticipantResultDetail] = []
+
+    model_config = ConfigDict(from_attributes=True)
