@@ -443,7 +443,7 @@ async def create_survey(
     new_survey = models.Survey(
         title=survey_in.survey_title,
         description=survey_in.survey_description,
-        config=survey_in.config.model_dump(),  # Speichere config als JSON
+        config=survey_in.config.model_dump(),
         prolific_enabled=survey_in.prolific_enabled,
         prolific_completion_url=survey_in.prolific_completion_url,
         enable_advanced_tracking=survey_in.enable_advanced_tracking,
@@ -557,6 +557,8 @@ async def update_survey(
     db_survey.title = survey_in.survey_title
     db_survey.description = survey_in.survey_description
     db_survey.config = survey_in.config.model_dump()
+    db_survey.prolific_enabled = survey_in.prolific_enabled
+    db_survey.prolific_completion_url = survey_in.prolific_completion_url
     db_survey.enable_advanced_tracking = survey_in.enable_advanced_tracking
     db_survey.track_copy_paste = survey_in.track_copy_paste
     db_survey.track_tab_focus = survey_in.track_tab_focus
