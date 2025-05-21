@@ -322,6 +322,9 @@ async def save_survey_results(
         start_time=participant_start_time_to_use,
         end_time=func.now(),  # Aktuelle Zeit als Endzeit
         completed=True,  # Annahme: Wenn Ergebnisse gesendet werden, ist die Umfrage abgeschlossen
+        page_durations_log=result_data.page_durations_ms
+        if result_data.page_durations_ms
+        else None,
     )
     db.add(new_participant)
     await db.flush()  # Um die ID des neuen Teilnehmers zu erhalten
@@ -355,11 +358,24 @@ async def save_survey_results(
                 f"  Chat-Verlauf für Element {survey_element_id_str} gefunden ({len(chat_history_for_element)} Nachrichten)."
             )
 
+        paste_count_for_element = (
+            result_data.paste_counts.get(survey_element_id_str, 0)
+            if result_data.paste_counts
+            else 0
+        )
+        focus_lost_count_for_element = (
+            result_data.focus_lost_counts.get(survey_element_id_str, 0)
+            if result_data.focus_lost_counts
+            else 0
+        )
+
         new_response = models.Response(
             participant_id=new_participant.id,
             survey_element_id=survey_element_id,
             response_value=answer_value,  # Antwortwert direkt speichern (kann str, list, int etc. sein)
             llm_chat_history=chat_history_for_element,  # Füge den Chat-Verlauf hinzu (oder None)
+            paste_count=paste_count_for_element,
+            focus_lost_count=focus_lost_count_for_element,
         )
         responses_to_add.append(new_response)
 
@@ -401,6 +417,9 @@ async def list_surveys(db: AsyncSession = Depends(get_db_session)):
                 updated_at=survey.updated_at,
                 element_count=element_count,
                 prolific_enabled=survey.prolific_enabled,
+                enable_advanced_tracking=getattr(
+                    survey, "enable_advanced_tracking", False
+                ),
             )
         )
     return survey_list_items
@@ -427,6 +446,14 @@ async def create_survey(
         config=survey_in.config.model_dump(),  # Speichere config als JSON
         prolific_enabled=survey_in.prolific_enabled,
         prolific_completion_url=survey_in.prolific_completion_url,
+        enable_advanced_tracking=survey_in.enable_advanced_tracking,
+        track_copy_paste=survey_in.track_copy_paste,
+        track_tab_focus=survey_in.track_tab_focus,
+        track_page_duration=survey_in.track_page_duration,
+        display_time_spent=survey_in.display_time_spent,
+        enable_max_duration=survey_in.enable_max_duration,
+        max_duration_minutes=survey_in.max_duration_minutes,
+        max_duration_warning_minutes=survey_in.max_duration_warning_minutes,
     )
     db.add(new_survey)
     await db.flush()  # Spüle, um die ID der neuen Umfrage zu bekommen
@@ -485,12 +512,22 @@ async def get_survey(survey_id: int, db: AsyncSession = Depends(get_db_session))
         id=survey.id,
         survey_title=survey.title,
         survey_description=survey.description,
-        config=survey.config or {},  # Stelle sicher, dass config ein Dict ist
+        config=survey.config or {},
         created_at=survey.created_at,
-        updated_at=survey.updated_at,
         questions=response_elements,
         prolific_enabled=getattr(survey, "prolific_enabled", False),
         prolific_completion_url=getattr(survey, "prolific_completion_url", None),
+        enable_advanced_tracking=getattr(survey, "enable_advanced_tracking", False),
+        track_copy_paste=getattr(survey, "track_copy_paste", False),
+        track_tab_focus=getattr(survey, "track_tab_focus", False),
+        track_page_duration=getattr(survey, "track_page_duration", False),
+        display_time_spent=getattr(survey, "display_time_spent", False),
+        enable_max_duration=getattr(survey, "enable_max_duration", False),
+        max_duration_minutes=getattr(survey, "max_duration_minutes", None),
+        max_duration_warning_minutes=getattr(
+            survey, "max_duration_warning_minutes", None
+        ),
+        updated_at=survey.updated_at,
     )
 
 
@@ -520,7 +557,15 @@ async def update_survey(
     db_survey.title = survey_in.survey_title
     db_survey.description = survey_in.survey_description
     db_survey.config = survey_in.config.model_dump()
-    db_survey.updated_at = func.now()  # Aktualisiere Zeitstempel
+    db_survey.enable_advanced_tracking = survey_in.enable_advanced_tracking
+    db_survey.track_copy_paste = survey_in.track_copy_paste
+    db_survey.track_tab_focus = survey_in.track_tab_focus
+    db_survey.track_page_duration = survey_in.track_page_duration
+    db_survey.display_time_spent = survey_in.display_time_spent
+    db_survey.enable_max_duration = survey_in.enable_max_duration
+    db_survey.max_duration_minutes = survey_in.max_duration_minutes
+    db_survey.max_duration_warning_minutes = survey_in.max_duration_warning_minutes
+    db_survey.updated_at = func.now()
 
     # 3. Alte Elemente löschen
     if db_survey.elements:  # Nur wenn Elemente vorhanden sind
@@ -658,6 +703,8 @@ async def get_survey_results_for_admin(
                     else "Fragetext nicht gefunden",
                     response_value=resp.response_value,
                     llm_chat_history=resp.llm_chat_history,
+                    paste_count=resp.paste_count,
+                    focus_lost_count=resp.focus_lost_count,
                 )
             )
 
@@ -672,6 +719,7 @@ async def get_survey_results_for_admin(
                 consent_given=p.consent_given,
                 completed=p.completed,
                 responses=answer_details_list,
+                page_durations_log=p.page_durations_log,
             )
         )
 
@@ -721,7 +769,7 @@ async def generate_llm_text(request_data: schemas.LLMRequest):
 
     try:
         print(
-            f"Sende an OpenAI (gpt-4o-mini) mit {len(messages_for_openai)} Nachrichten..."
+            f"Sende an OpenAI (gpt-4.1-nano) mit {len(messages_for_openai)} Nachrichten..."
         )
         chat_completion = await openai_client.chat.completions.create(
             messages=messages_for_openai,

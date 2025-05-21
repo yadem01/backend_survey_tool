@@ -30,6 +30,18 @@ class Survey(Base):
     prolific_enabled = Column(Boolean, default=False)
     prolific_completion_url = Column(String, nullable=True)
 
+    # FELDER für erweitertes Tracking & Zeitmanagement Konfiguration
+    enable_advanced_tracking = Column(Boolean, default=False)  # Globaler Schalter
+    track_copy_paste = Column(Boolean, default=False)  # Copy-Paste Tracking aktivieren?
+    track_tab_focus = Column(Boolean, default=False)  # Tab-Fokus Tracking aktivieren?
+    track_page_duration = Column(Boolean, default=False)  # Zeit pro Seite messen?
+    display_time_spent = Column(Boolean, default=False)  # Verstrichene Zeit anzeigen?
+    enable_max_duration = Column(Boolean, default=False)  # Max. Dauer aktivieren?
+    max_duration_minutes = Column(Integer, nullable=True)  # Max. Dauer in Minuten
+    max_duration_warning_minutes = Column(
+        Integer, nullable=True
+    )  # Vorwarnzeit in Minuten
+
     # Beziehung zu SurveyElement (eine Umfrage hat viele Elemente)
     elements = relationship(
         "SurveyElement", back_populates="survey", cascade="all, delete-orphan"
@@ -79,6 +91,10 @@ class SurveyParticipant(Base):
     consent_given = Column(Boolean, default=False)
     completed = Column(Boolean, default=False)
 
+    page_durations_log = Column(
+        JSON, nullable=True
+    )  # z.B. {"1": 30500, "2": 45200} (Seite: ms)
+
     survey = relationship("Survey", back_populates="participants")
     responses = relationship(
         "Response", back_populates="participant", cascade="all, delete-orphan"
@@ -98,5 +114,12 @@ class Response(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     llm_chat_history = Column(JSON, nullable=True)
+
+    paste_count = Column(
+        Integer, nullable=True, default=0
+    )  # Anzahl Copy-Paste-Versuche
+    focus_lost_count = Column(
+        Integer, nullable=True, default=0
+    )  # Anzahl Tab/Fokus-Verluste
 
     participant = relationship("SurveyParticipant", back_populates="responses")

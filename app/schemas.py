@@ -41,6 +41,16 @@ class SurveyResultCreate(BaseModel):
     )
     participant_start_time: Optional[datetime] = None
 
+    paste_counts: Optional[Dict[str, int]] = Field(
+        default_factory=dict
+    )  # Key: survey_element_id as string
+    focus_lost_counts: Optional[Dict[str, int]] = Field(
+        default_factory=dict
+    )  # Key: survey_element_id as string
+    page_durations_ms: Optional[Dict[str, int]] = Field(
+        default_factory=dict
+    )  # Key: page_number as string, Value: duration in ms
+
 
 # Modell für die Antwort nach erfolgreichem Speichern (Beispiel)
 class SurveyResultResponse(BaseModel):
@@ -84,7 +94,7 @@ class SurveyElementCreate(BaseModel):
 # Schema für die globale Konfiguration der Umfrage
 class SurveyConfigCreate(BaseModel):
     randomize_groups: bool = False
-    group_selection: Optional[Dict[str, int]] = {}
+    group_selection: Optional[Dict[str, int]] = Field(default_factory=dict)
 
 
 # Hauptschema für das Erstellen einer neuen Umfrage (kommt vom Frontend)
@@ -97,6 +107,18 @@ class SurveyCreate(BaseModel):
     questions: List[SurveyElementCreate] = []  # Liste der Elemente
     prolific_enabled: bool = Field(default=False)
     prolific_completion_url: Optional[str] = None
+
+    # FELDER für erweiterte Tracking & Zeitmanagement Konfiguration
+    enable_advanced_tracking: bool = Field(default=False)
+    track_copy_paste: bool = Field(default=False)
+    track_tab_focus: bool = Field(default=False)
+    track_page_duration: bool = Field(default=False)
+    display_time_spent: bool = Field(default=False)
+    enable_max_duration: bool = Field(default=False)
+    max_duration_minutes: Optional[int] = Field(
+        default=None, ge=0
+    )  # ge=0 erlaubt 0 für "kein Limit" wenn enable_max_duration true ist
+    max_duration_warning_minutes: Optional[int] = Field(default=None, ge=0)
 
 
 # Schema für die Antwort nach dem Erstellen einer Umfrage
@@ -178,6 +200,11 @@ class AnswerDetail(BaseModel):
     question_text: Optional[str] = None
     question_type: Optional[str] = None
 
+    # Tracking-Felder pro Antwort
+    paste_count: Optional[int] = None
+    focus_lost_count: Optional[int] = None
+    model_config = ConfigDict(from_attributes=True)
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -193,6 +220,10 @@ class ParticipantResultDetail(BaseModel):
     consent_given: bool
     completed: bool
     responses: List[AnswerDetail] = []
+
+    page_durations_log: Optional[Dict[str, int]] = (
+        None  # Key: page_number as string, Value: duration in ms
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
