@@ -7,7 +7,6 @@ from sqlalchemy import (
     Boolean,
     JSON,
     ForeignKey,
-    Float,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func  # Für Default-Zeitstempel
@@ -71,9 +70,19 @@ class SurveyElement(Base):
     allow_back_navigation = Column(Boolean, default=True)
     llm_assistance_enabled = Column(Boolean, default=False)
     maxlength = Column(Integer, nullable=True)
+    task_identifier = Column(
+        String, nullable=True, index=True
+    )  # Zur Gruppierung von Elementen zu einem Task
+    references_element_id = Column(
+        Integer, ForeignKey("survey_elements.id"), nullable=True
+    )  # Verweis auf ein anderes Element
 
     # Beziehung zurück zu Survey
     survey = relationship("Survey", back_populates="elements")
+
+    # Optionale Beziehung für den self-referential ForeignKey (um z.B. das referenzierte Element leicht zu laden)
+    # referenced_element = relationship("SurveyElement", remote_side=[id], foreign_keys=[references_element_id], uselist=False)
+    # responses_to_reference = relationship("SurveyElement", back_populates="referenced_element", foreign_keys=[references_element_id], remote_side=[id])
 
 
 class SurveyParticipant(Base):

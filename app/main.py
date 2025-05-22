@@ -463,11 +463,8 @@ async def create_survey(
     # 2. Erstelle die Elemente (Fragen etc.) und verknüpfe sie
     elements_to_add = []
     for element_data in survey_in.questions:
-        # Konvertiere Pydantic-Schema zu Dict für SQLAlchemy-Modell
         element_dict = element_data.model_dump()
-        # Füge die survey_id hinzu
         element_dict["survey_id"] = new_survey.id
-        # Erstelle SQLAlchemy-Objekt
         new_element = models.SurveyElement(**element_dict)
         elements_to_add.append(new_element)
 
@@ -703,6 +700,12 @@ async def get_survey_results_for_admin(
                     question_text=survey_element.question_text
                     if survey_element
                     else "Fragetext nicht gefunden",
+                    task_identifier=survey_element.task_identifier
+                    if survey_element
+                    else None,
+                    references_element_id=survey_element.references_element_id
+                    if survey_element
+                    else None,
                     response_value=resp.response_value,
                     llm_chat_history=resp.llm_chat_history,
                     paste_count=resp.paste_count,
@@ -753,7 +756,6 @@ async def generate_llm_text(request_data: schemas.LLMRequest):
     # Standard-Prompt-Struktur
     # Der Nutzer steuert die KI durch seine `user_input`, die hier als Aufforderung dient.
     system_prompt = (
-        f"You are a helpful assistant. The original survey question is: '{request_data.question_text}'. "
         "Based on the following chat history, formulate or complete the user's answer. "
         "Respond precisely and relevantly. Output your answer in the user's input language."
     )

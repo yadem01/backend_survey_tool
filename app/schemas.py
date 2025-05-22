@@ -79,6 +79,8 @@ class SurveyElementCreate(BaseModel):
     allow_back_navigation: bool = True
     llm_assistance_enabled: bool = Field(default=False)
     maxlength: Optional[int] = None
+    task_identifier: Optional[str] = Field(default=None)
+    references_element_id: Optional[int] = Field(default=None)
 
     # Validator, um sicherzustellen, dass question_type gesetzt ist, wenn element_type 'question' ist
     @field_validator("question_type", mode="before")
@@ -129,11 +131,10 @@ class SurveyCreateResponse(BaseModel):
 
 # Schema zum Zurückgeben einer vollständigen Umfrage (Beispiel)
 class SurveyElementResponse(SurveyElementCreate):  # Erbt von Create
-    id: int  # Fügt ID hinzu
+    id: int
     survey_id: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SurveyResponse(SurveyCreate):  # Erbt von Create
@@ -144,8 +145,7 @@ class SurveyResponse(SurveyCreate):  # Erbt von Create
         SurveyElementResponse
     ] = []  # Verwendet Response-Schema für Elemente
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Schema für einen Listeneintrag einer Umfrage
@@ -199,11 +199,12 @@ class AnswerDetail(BaseModel):
     llm_chat_history: Optional[List[ChatMessage]] = None
     question_text: Optional[str] = None
     question_type: Optional[str] = None
+    task_identifier: Optional[str] = None
+    references_element_id: Optional[int] = None
 
     # Tracking-Felder pro Antwort
     paste_count: Optional[int] = None
     focus_lost_count: Optional[int] = None
-    model_config = ConfigDict(from_attributes=True)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -221,9 +222,7 @@ class ParticipantResultDetail(BaseModel):
     completed: bool
     responses: List[AnswerDetail] = []
 
-    page_durations_log: Optional[Dict[str, int]] = (
-        None  # Key: page_number as string, Value: duration in ms
-    )
+    page_durations_log: Optional[Dict[str, int]] = None
 
     model_config = ConfigDict(from_attributes=True)
 
