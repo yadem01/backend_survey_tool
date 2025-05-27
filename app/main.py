@@ -77,11 +77,22 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Survey Tool Backend", lifespan=lifespan)
 
 # --- CORS Middleware (WICHTIG für Frontend-Zugriff) ---
-origins = [
+fallback_origins = [
     "http://127.0.0.1:5173",
     "http://localhost:5173",
     "https://survey-tool-vue3.vercel.app",
 ]
+
+env_origins = os.getenv("BACKEND_ALLOWED_ORIGINS")
+origins = []
+
+if env_origins:
+    origins = [origin.strip() for origin in env_origins.split(",")]
+else:
+    origins = fallback_origins
+if not origins:
+    origins = fallback_origins
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -809,7 +820,15 @@ async def generate_llm_text(request_data: schemas.LLMRequest):
 
 
 # --- Starten der Anwendung (wie zuvor) ---
+
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    # Lese Host und Port aus Umgebungsvariablen, mit Fallbacks
+    APP_HOST = os.getenv("APP_HOST", "127.0.0.1")
+    APP_PORT = int(os.getenv("APP_PORT", "8000"))
+    RELOAD_APP = (
+        os.getenv("RELOAD_APP", "True").lower() == "true"
+    )  # Beispiel für reload
+
+    uvicorn.run("main:app", host=APP_HOST, port=APP_PORT, reload=RELOAD_APP)
