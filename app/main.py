@@ -828,4 +828,4 @@ if __name__ == "__main__":
     APP_PORT = int(os.getenv("APP_PORT", "8000"))
     RELOAD_APP = os.getenv("RELOAD_APP", "True").lower() == "true"
 
-    uvicorn.run("main:app", host=APP_HOST, port=APP_PORT, reload=RELOAD_APP)
+    uvicorn.run("app.main:app", host=APP_HOST, port=APP_PORT, reload=RELOAD_APP)
