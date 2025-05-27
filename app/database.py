@@ -1,50 +1,70 @@
+# app/database.py
 import os
-from pathlib import Path
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
 
-# Annahme: .env Datei ist im Hauptverzeichnis des Backends (eine Ebene über 'app')
-dotenv_path = Path(__file__).resolve().parent.parent / ".env"
-load_dotenv(dotenv_path=dotenv_path)
+# Lade Umgebungsvariablen aus der .env Datei im Projekt-Root
+# (stellt sicher, dass es auch funktioniert, wenn database.py indirekt importiert wird)
+dotenv_path = os.path.join(
+    os.path.dirname(__file__), "..", ".env"
+)  # Pfad zur .env im Root
+if os.path.exists(dotenv_path):
+    load_dotenv(dotenv_path)
+else:  # Fallback, falls .env nicht im Root ist, sondern neben database.py (weniger üblich)
+    load_dotenv()
 
-DEFAULT_SQLITE_PATH = Path(__file__).resolve().parent / "survey_app.db"
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{DEFAULT_SQLITE_PATH}")
 
-print(f"DEBUG: Using DATABASE_URL: {DATABASE_URL}")  # Debug-Ausgabe für den Pfad
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-engine = create_async_engine(
-    DATABASE_URL, echo=False
-)  # Echo auf False für weniger Logs bei Background-Tasks
+if DATABASE_URL is None:
+    print(
+        "WARNUNG: DATABASE_URL nicht in Umgebungsvariablen gefunden! Fallback auf lokale SQLite-DB."
+    )
+    # Fallback auf eine SQLite-Datenbank, wenn keine DATABASE_URL gesetzt ist
+    # Passe den Pfad an, falls deine SQLite-DB woanders liegen soll oder anders heißt
+    # Für WSL ist ein Pfad innerhalb des WSL-Dateisystems am besten, z.B. relativ zum Projekt
+    sqlite_db_path = os.path.join(os.path.dirname(__file__), "survey_app_fallback.db")
+    DATABASE_URL = f"sqlite+aiosqlite:///{sqlite_db_path}"
+
+
+print(f"DEBUG [database.py]: Using DATABASE_URL: {DATABASE_URL}")
+
+# echo=True gibt alle SQL-Statements aus, die SQLAlchemy generiert. Nützlich für Debugging.
+# In Produktion auf False setzen für weniger Log-Output.
+engine = create_async_engine(DATABASE_URL, echo=True)
+
 AsyncSessionFactory = sessionmaker(
-    bind=engine, class_=AsyncSession, expire_on_commit=False
+    autocommit=False, autoflush=False, bind=engine, class_=AsyncSession
 )
+
 Base = declarative_base()
 
 
-# Hilfsfunktion, um eine Datenbank-Session zu erhalten (Dependency für FastAPI)
 async def get_db_session() -> AsyncSession:
-    """
-    Dependency to get an async database session.
-    Ensures the session is closed after the request.
-    """
     async with AsyncSessionFactory() as session:
         try:
             yield session
-            await session.commit()  # Änderungen committen, wenn alles gut ging
-        except Exception:
+            await session.commit()  # Commit am Ende, wenn alles gut ging
+        except Exception as e:
             await session.rollback()  # Rollback bei Fehlern
-            raise
+            raise e
         finally:
-            await session.close()  # Session immer schließen
+            await session.close()
 
 
-# Funktion zum Erstellen der Tabellen (optional, für Initialisierung)
 async def create_db_and_tables():
-    """Creates database tables based on the defined models."""
-    async with engine.begin() as conn:
-        # Löscht alle Tabellen (nur für Entwicklung!)
-        # await conn.run_sync(Base.metadata.drop_all)
-        # Erstellt alle Tabellen
-        await conn.run_sync(Base.metadata.create_all)
-    print("Datenbanktabellen erstellt (falls nicht vorhanden).")
+    """
+    Diese Funktion ist jetzt nicht mehr für die Erstellung von Tabellen zuständig,
+    da dies von Alembic übernommen wird. Sie kann für andere initiale DB-Setup-Aufgaben
+    verwendet werden, falls nötig, oder leer bleiben.
+    """
+    print(
+        "INFO [database.py]: create_db_and_tables() aufgerufen. Tabellenerstellung wird durch Alembic verwaltet."
+    )
+    # Der folgende Code sollte entfernt oder auskommentiert werden, wenn Alembic verwendet wird:
+    # async with engine.begin() as conn:
+    #     # await conn.run_sync(Base.metadata.drop_all) # VORSICHT: Löscht alle Tabellen
+    #     await conn.run_sync(Base.metadata.create_all)
+    print("Datenbanktabellen würden hier erstellt (jetzt durch Alembic verwaltet).")
+    pass

@@ -65,9 +65,11 @@ if OPENAI_API_KEY:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Anwendung startet...")
-    print("Initialisiere Datenbanktabellen...")
+    # print("Initialisiere Datenbanktabellen...")
     await create_db_and_tables()
-    print("Datenbankinitialisierung abgeschlossen.")
+    print(
+        "Datenbankinitialisierung (ohne Tabellenerstellung durch Code) abgeschlossen."
+    )
     yield
     print("Anwendung fährt herunter...")
     await engine.dispose()

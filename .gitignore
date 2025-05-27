@@ -10,7 +10,7 @@ __pycache__/
 
 # Environment Variables
 .env
-*.env.*
+*.env
 
 # Databases
 *.db
