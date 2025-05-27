@@ -6,3 +6,4 @@ aiosqlite>=0.17.0
 python-dotenv>=1.0.0
 python-multipart>=0.0.5
 openai
+gunicorn
