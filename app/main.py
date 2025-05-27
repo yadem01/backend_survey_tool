@@ -126,7 +126,6 @@ async def perform_image_cleanup():
             print(
                 f"Hintergrund-Task: Verwendete Bild-URLs (aus DB): {len(used_image_full_urls)}"
             )
-            # if used_image_full_urls: print(f"Beispiel verwendete URL: {list(used_image_full_urls)[0]}")
 
             # 2. Alle Dateien im Upload-Verzeichnis auflisten
             if not UPLOAD_DIR.exists():
@@ -827,8 +826,6 @@ if __name__ == "__main__":
     # Lese Host und Port aus Umgebungsvariablen, mit Fallbacks
     APP_HOST = os.getenv("APP_HOST", "127.0.0.1")
     APP_PORT = int(os.getenv("APP_PORT", "8000"))
-    RELOAD_APP = (
-        os.getenv("RELOAD_APP", "True").lower() == "true"
-    )  # Beispiel für reload
+    RELOAD_APP = os.getenv("RELOAD_APP", "True").lower() == "true"
 
     uvicorn.run("main:app", host=APP_HOST, port=APP_PORT, reload=RELOAD_APP)
