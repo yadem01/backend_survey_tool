@@ -65,9 +65,7 @@ if OPENAI_API_KEY:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Anwendung startet...")
-    print("Initialisiere Datenbanktabellen...")
     await create_db_and_tables()
-    print("Datenbankinitialisierung abgeschlossen.")
     yield
     print("Anwendung fährt herunter...")
     await engine.dispose()
@@ -90,8 +88,12 @@ if env_origins:
     origins = [origin.strip() for origin in env_origins.split(",")]
 else:
     origins = fallback_origins
+    print("CORS: Es werden die Fallback-Origins verwendet:", fallback_origins)
 if not origins:
     origins = fallback_origins
+    print(
+        "CORS: Keine Origins in Umgebungsvariablen gefunden, Fallback-Origins werden verwendet."
+    )
 
 app.add_middleware(
     CORSMiddleware,
