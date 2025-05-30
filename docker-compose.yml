@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: survey-tool-backend-compose # Optional: Image Name
+    container_name: survey_backend_service
+    restart: unless-stopped # Startet den Container neu, außer er wurde manuell gestoppt
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mountet das Verzeichnis für Bild-Uploads als benanntes Volume
+      - survey_uploads:/srv/survey_backend/app/uploads/images
+      # Optional: Code-Mount für Live-Reload während der Entwicklung (wenn Uvicorn --reload nutzt)
+      # - ./app:/srv/app/app  # Mountet deinen lokalen 'app'-Ordner in den Container
+    networks:
+      - survey-net
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:15
+    container_name: survey_postgres_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-surveyadmin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dein_sicheres_passwort}
+      POSTGRES_DB: ${POSTGRES_DB:-survey_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - survey_postgres_data:/var/lib/postgresql/data
+    networks:
+      - survey-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-surveyadmin} -d ${POSTGRES_DB:-survey_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  survey-net:
+    driver: bridge
+
+volumes:
+  survey_postgres_data:
+  survey_uploads:
