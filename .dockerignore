@@ -1,0 +1,58 @@
+# .dockerignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtuelle Umgebung
+venv/
+.venv/
+
+# Datenbankdateien (falls noch lokal vorhanden oder für andere Zwecke)
+*.db
+*.sqlite
+*.sqlite3
+survey_app_fallback.db # Der Fallback-Name aus deiner database.py
+
+# Alembic Cache/interne Dateien (falls vorhanden und nicht benötigt im Image)
+# alembic.db # Beispiel, falls Alembic eine lokale DB für Status nutzt
+
+# IDE/Editor spezifische Ordner
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Betriebssystem spezifische Dateien
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml # Falls du später eine docker-compose.yml hinzufügst
+
+# Lokale Umgebungsvariablen-Datei
+.env
+.env.*
+!/.env.example # Erlaube eine .env.example Datei, falls vorhanden
+
+# Testdateien und -reports
+tests/
+.pytest_cache/
+htmlcov/
+.coverage
+*.cover
+
+# Build-Artefakte
+dist/
+build/
+*.egg-info/
+
+# Log-Dateien
+*.log
