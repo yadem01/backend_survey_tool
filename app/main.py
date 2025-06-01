@@ -86,6 +86,7 @@ origins = []
 
 if env_origins:
     origins = [origin.strip() for origin in env_origins.split(",")]
+    print("CORS: Erlaubte Origins aus Umgebungsvariablen:", origins)
 else:
     origins = fallback_origins
     print("CORS: Es werden die Fallback-Origins verwendet:", fallback_origins)
@@ -291,14 +292,6 @@ async def save_survey_results(
     Speichert die Ergebnisse einer Umfrageteilnahme, inklusive der Antworten
     und der LLM-Chat-Verläufe pro Frage.
     """
-    # print("Empfangene Ergebnisdaten (Auszug):")
-    # print(f"  Prolific PID: {result_data.prolific_pid}")
-    # print(f"  Consent Given: {result_data.consent_given}")
-    # print(f"  Anzahl Antworten: {len(result_data.answers)}")
-    # print(
-    #     f"  Anzahl Chat-Verläufe: {len(result_data.llm_chat_histories if result_data.llm_chat_histories else [])}"
-    # )
-
     survey_id_extracted = None
     # Ermittlung der survey_id
     if result_data.answers:
@@ -380,6 +373,13 @@ async def save_survey_results(
             if result_data.focus_lost_counts
             else 0
         )
+        display_info = (
+            result_data.element_display_info.get(survey_element_id_str)
+            if result_data.element_display_info
+            else None
+        )
+        displayed_page_val = display_info.get("page") if display_info else None
+        displayed_ordering_val = display_info.get("ordering") if display_info else None
 
         new_response = models.Response(
             participant_id=new_participant.id,
@@ -388,6 +388,8 @@ async def save_survey_results(
             llm_chat_history=chat_history_for_element,  # Füge den Chat-Verlauf hinzu (oder None)
             paste_count=paste_count_for_element,
             focus_lost_count=focus_lost_count_for_element,
+            displayed_page=displayed_page_val,
+            displayed_ordering=displayed_ordering_val,
         )
         responses_to_add.append(new_response)
 
@@ -579,7 +581,7 @@ async def update_survey(
     db_survey.updated_at = func.now()
 
     # 3. Alte Elemente löschen
-    if db_survey.elements:  # Nur wenn Elemente vorhanden sind
+    if db_survey.elements:
         print(
             f"Lösche {len(db_survey.elements)} alte Elemente für Survey ID {survey_id}"
         )
@@ -593,17 +595,13 @@ async def update_survey(
         if "id" in element_dict:
             del element_dict["id"]  # Entferne Frontend-ID, da DB neue generiert
 
-        element_dict["survey_id"] = survey_id  # Verwende die bestehende survey_id
+        element_dict["survey_id"] = survey_id
         new_element = models.SurveyElement(**element_dict)
         elements_to_add.append(new_element)
 
     if elements_to_add:
-        # Füge neue Elemente zur Collection hinzu (SQLAlchemy kümmert sich um das Hinzufügen zur Session)
         db_survey.elements.extend(elements_to_add)
         print(f"{len(elements_to_add)} neue Survey-Elemente hinzugefügt.")
-
-    # db.add(db_survey) # Markiere die Umfrage als geändert (SQLAlchemy erkennt das oft automatisch)
-    # Commit wird durch get_db_session erledigt
 
     background_tasks.add_task(perform_image_cleanup)
     print(f"Bild-Cleanup-Task für Survey ID {survey_id} im Hintergrund gestartet.")
@@ -722,6 +720,8 @@ async def get_survey_results_for_admin(
                     llm_chat_history=resp.llm_chat_history,
                     paste_count=resp.paste_count,
                     focus_lost_count=resp.focus_lost_count,
+                    displayed_page=resp.displayed_page,
+                    displayed_ordering=resp.displayed_ordering,
                 )
             )
 
@@ -818,6 +818,150 @@ async def generate_llm_text(request_data: schemas.LLMRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Fehler bei der Kommunikation mit dem LLM: {str(e)}",
         )
+
+
+@app.get(
+    "/api/admin/export/all_data/flat",
+    response_model=schemas.AllDataFlatExport,
+    dependencies=[Depends(verify_admin_token)],
+)
+async def export_all_data_flat(db: AsyncSession = Depends(get_db_session)):
+    """Exportiert alle relevanten Daten aus der Datenbank in einer flachen JSON-Struktur."""
+    print("Admin exportiert alle Daten (flaches Format).")
+
+    surveys_q = await db.execute(select(models.Survey))
+    surveys = [
+        schemas.SurveyExport.model_validate(s) for s in surveys_q.scalars().all()
+    ]
+
+    elements_q = await db.execute(select(models.SurveyElement))
+    survey_elements = [
+        schemas.SurveyElementExport.model_validate(el)
+        for el in elements_q.scalars().all()
+    ]
+
+    participants_q = await db.execute(select(models.SurveyParticipant))
+    survey_participants = [
+        schemas.SurveyParticipantExport.model_validate(p)
+        for p in participants_q.scalars().all()
+    ]
+
+    responses_q = await db.execute(select(models.Response))
+    responses = [
+        schemas.ResponseExport.model_validate(r) for r in responses_q.scalars().all()
+    ]
+
+    return schemas.AllDataFlatExport(
+        surveys=surveys,
+        survey_elements=survey_elements,
+        survey_participants=survey_participants,
+        responses=responses,
+    )
+
+
+@app.get(
+    "/api/admin/export/all_data/nested",
+    response_model=schemas.AllDataNestedExport,
+    dependencies=[Depends(verify_admin_token)],
+)
+async def export_all_data_nested(db: AsyncSession = Depends(get_db_session)):
+    """Exportiert alle Umfragen mit ihren Elementen und Teilnehmerergebnissen (verschachtelt)."""
+    print("Admin exportiert alle Daten (verschachteltes Format).")
+
+    def map_answer_detail(resp_obj, survey_element_for_resp):
+        return schemas.AnswerDetail(
+            id=resp_obj.id,
+            survey_element_id=resp_obj.survey_element_id,
+            element_type=survey_element_for_resp.element_type
+            if survey_element_for_resp
+            else "N/A",
+            question_type=survey_element_for_resp.question_type
+            if survey_element_for_resp
+            else None,
+            question_text=survey_element_for_resp.question_text
+            if survey_element_for_resp
+            else "Fragetext nicht gefunden",
+            task_identifier=survey_element_for_resp.task_identifier
+            if survey_element_for_resp
+            else None,
+            references_element_id=survey_element_for_resp.references_element_id
+            if survey_element_for_resp
+            else None,
+            response_value=resp_obj.response_value,
+            llm_chat_history=resp_obj.llm_chat_history,
+            paste_count=resp_obj.paste_count,
+            focus_lost_count=resp_obj.focus_lost_count,
+            created_at=resp_obj.created_at,
+            displayed_page=getattr(resp_obj, "displayed_page", None),
+            displayed_ordering=getattr(resp_obj, "displayed_ordering", None),
+        )
+
+    def map_participant_detail(p_obj, elements_map):
+        answer_details_list: List[schemas.AnswerDetail] = [
+            map_answer_detail(resp_obj, elements_map.get(resp_obj.survey_element_id))
+            for resp_obj in p_obj.responses
+        ]
+        return schemas.ParticipantResultDetail(
+            participant_id=p_obj.id,
+            prolific_pid=p_obj.prolific_pid,
+            study_id=p_obj.study_id,
+            session_id=p_obj.session_id,
+            start_time=p_obj.start_time,
+            end_time=p_obj.end_time,
+            consent_given=p_obj.consent_given,
+            completed=p_obj.completed,
+            responses=answer_details_list,
+            page_durations_log=p_obj.page_durations_log,
+        )
+
+    # Lade Umfragen mit allen zugehörigen Daten
+    stmt = (
+        select(models.Survey)
+        .options(
+            selectinload(models.Survey.elements),
+            selectinload(models.Survey.participants).options(
+                selectinload(models.SurveyParticipant.responses)
+            ),
+        )
+        .order_by(models.Survey.id)
+    )
+    result = await db.execute(stmt)
+    db_surveys = result.scalars().unique().all()
+
+    exported_surveys: List[schemas.SurveyFullNestedExport] = []
+    for survey_obj in db_surveys:
+        elements_map = {el.id: el for el in survey_obj.elements}
+        participant_details_list: List[schemas.ParticipantResultDetail] = [
+            map_participant_detail(p_obj, elements_map)
+            for p_obj in survey_obj.participants
+        ]
+        survey_elements_response = [
+            schemas.SurveyElementResponse.model_validate(el)
+            for el in survey_obj.elements
+        ]
+        exported_survey = schemas.SurveyFullNestedExport(
+            id=survey_obj.id,
+            survey_title=survey_obj.title,
+            survey_description=survey_obj.description,
+            config=survey_obj.config,
+            created_at=survey_obj.created_at,
+            updated_at=survey_obj.updated_at,
+            questions=survey_elements_response,
+            prolific_enabled=survey_obj.prolific_enabled,
+            prolific_completion_url=survey_obj.prolific_completion_url,
+            enable_advanced_tracking=survey_obj.enable_advanced_tracking,
+            track_copy_paste=survey_obj.track_copy_paste,
+            track_tab_focus=survey_obj.track_tab_focus,
+            track_page_duration=survey_obj.track_page_duration,
+            display_time_spent=survey_obj.display_time_spent,
+            enable_max_duration=survey_obj.enable_max_duration,
+            max_duration_minutes=survey_obj.max_duration_minutes,
+            max_duration_warning_minutes=survey_obj.max_duration_warning_minutes,
+            participants_results=participant_details_list,
+        )
+        exported_surveys.append(exported_survey)
+
+    return schemas.AllDataNestedExport(surveys=exported_surveys)
 
 
 # --- Starten der Anwendung (wie zuvor) ---

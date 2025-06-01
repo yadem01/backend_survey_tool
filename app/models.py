@@ -131,4 +131,7 @@ class Response(Base):
         Integer, nullable=True, default=0
     )  # Anzahl Tab/Fokus-Verluste
 
+    displayed_page = Column(Integer, nullable=True)
+    displayed_ordering = Column(Integer, nullable=True)
+
     participant = relationship("SurveyParticipant", back_populates="responses")
