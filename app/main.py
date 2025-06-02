@@ -789,6 +789,7 @@ async def get_survey_results_for_admin(
                     response_value=resp.response_value,
                     llm_chat_history=resp.llm_chat_history,
                     paste_count=resp.paste_count,
+                    created_at=resp.created_at,
                     focus_lost_count=resp.focus_lost_count,
                     displayed_page=resp.displayed_page,
                     displayed_ordering=resp.displayed_ordering,
