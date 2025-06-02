@@ -769,6 +769,7 @@ async def get_survey_results_for_admin(
 
             answer_details_list.append(
                 schemas.AnswerDetail(
+                    id=resp.id,
                     survey_element_id=resp.survey_element_id,
                     element_type=survey_element.element_type
                     if survey_element
