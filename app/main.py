@@ -546,25 +546,46 @@ async def get_survey(survey_id: int, db: AsyncSession = Depends(get_db_session))
 @app.put("/api/surveys/{survey_id}", response_model=schemas.SurveyUpdateResponse)
 async def update_survey(
     survey_id: int,
-    survey_in: schemas.SurveyCreate,  # Verwendet das gleiche Schema wie beim Erstellen
+    survey_in: schemas.SurveyCreate,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db_session),
     admin_user: dict = Depends(verify_admin_token),
 ):
-    """Aktualisiert eine bestehende Umfrage und deren Elemente."""
     print(f"Admin '{admin_user['username']}' aktualisiert Umfrage ID: {survey_id}")
 
     # 1. Umfrage aus DB laden
     result = await db.execute(
         select(models.Survey)
-        .options(selectinload(models.Survey.elements))
+        .options(
+            selectinload(models.Survey.elements),
+            selectinload(models.Survey.participants).selectinload(
+                models.SurveyParticipant.responses
+            ),
+        )  # Lade Teilnehmer und deren Antworten
         .where(models.Survey.id == survey_id)
     )
     db_survey = result.scalar_one_or_none()
     if db_survey is None:
         raise HTTPException(status_code=404, detail="Umfrage nicht gefunden")
 
-    # 2. Felder der Umfrage aktualisieren
+    # 2. Prüfen, ob Antworten existieren und ggf. löschen
+    if db_survey.participants:
+        print(
+            f"WARNUNG: Umfrage {survey_id} hat {len(db_survey.participants)} Teilnehmer. Zugehörige Antworten und Teilnehmerdaten werden gelöscht."
+        )
+        for participant in db_survey.participants:
+            # Lösche alle Antworten dieses Teilnehmers
+            if participant.responses:
+                for response in participant.responses:  # Notwendig, wenn cascade nicht perfekt greift oder für explizite Logik
+                    await db.delete(response)
+                await db.flush()  # Stelle sicher, dass Antworten gelöscht sind, bevor Teilnehmer gelöscht wird
+            await db.delete(participant)
+        await db.flush()  # Stelle sicher, dass Teilnehmer gelöscht sind
+        # Nachdem die Teilnehmer gelöscht wurden, sollte die participants-Liste der Umfrage leer sein
+        db_survey.participants.clear()  # Explizit leeren, um ORM-State zu aktualisieren
+        print(f"Alle Teilnehmer und deren Antworten für Umfrage {survey_id} gelöscht.")
+
+    # 3. Felder der Umfrage aktualisieren
     db_survey.title = survey_in.survey_title
     db_survey.description = survey_in.survey_description
     db_survey.config = survey_in.config.model_dump()
@@ -578,34 +599,42 @@ async def update_survey(
     db_survey.enable_max_duration = survey_in.enable_max_duration
     db_survey.max_duration_minutes = survey_in.max_duration_minutes
     db_survey.max_duration_warning_minutes = survey_in.max_duration_warning_minutes
-    db_survey.updated_at = func.now()
+    db_survey.updated_at = func.now()  # Aktualisiere Zeitstempel
 
-    # 3. Alte Elemente löschen
+    # 4. Alte Elemente löschen (SQLAlchemy ORM kümmert sich darum, wenn die Beziehung korrekt konfiguriert ist)
+    # Es ist sicherer, sie explizit zu löschen, um ORM-Überraschungen zu vermeiden.
     if db_survey.elements:
         print(
             f"Lösche {len(db_survey.elements)} alte Elemente für Survey ID {survey_id}"
         )
-        db_survey.elements.clear()
-        await db.flush()
+        for (
+            old_element
+        ) in db_survey.elements:  # Iteriere über eine Kopie oder lösche rückwärts
+            await db.delete(old_element)
+        await db.flush()  # Wende Löschungen an
+        db_survey.elements.clear()  # Leere die Kollektion im ORM
+        print(f"Alte Elemente für Survey ID {survey_id} gelöscht.")
 
-    # 4. Neue Elemente erstellen und hinzufügen
+    # 5. Neue Elemente erstellen und hinzufügen
     elements_to_add = []
     for element_data in survey_in.questions:
         element_dict = element_data.model_dump(exclude_unset=True)
-        if "id" in element_dict:
-            del element_dict["id"]  # Entferne Frontend-ID, da DB neue generiert
-
-        element_dict["survey_id"] = survey_id
+        if (
+            "id" in element_dict
+        ):  # Entferne Frontend-ID, da DB neue generiert oder Konflikte vermeidet
+            del element_dict["id"]
+        element_dict["survey_id"] = survey_id  # Verknüpfe mit der aktuellen Umfrage
         new_element = models.SurveyElement(**element_dict)
         elements_to_add.append(new_element)
 
     if elements_to_add:
-        db_survey.elements.extend(elements_to_add)
+        db_survey.elements.extend(elements_to_add)  # Füge neue Elemente hinzu
         print(f"{len(elements_to_add)} neue Survey-Elemente hinzugefügt.")
 
-    background_tasks.add_task(perform_image_cleanup)
-    print(f"Bild-Cleanup-Task für Survey ID {survey_id} im Hintergrund gestartet.")
+    await db.commit()  # Committe alle Änderungen (Umfrage-Update, Element-Löschung/Hinzufügung, Teilnehmer/Antwort-Löschung)
+    await db.refresh(db_survey)  # Lade die Umfrage neu, um den aktuellen Stand zu haben
 
+    background_tasks.add_task(perform_image_cleanup)
     return schemas.SurveyUpdateResponse(survey_id=survey_id)
 
 
@@ -617,12 +646,19 @@ async def delete_survey(
     db: AsyncSession = Depends(get_db_session),
     admin_user: dict = Depends(verify_admin_token),
 ):
-    """Löscht eine spezifische Umfrage und alle zugehörigen Daten."""
     print(f"Admin '{admin_user['username']}' löscht Umfrage ID: {survey_id}")
 
-    # 1. Umfrage aus DB laden, um sicherzustellen, dass sie existiert
+    # Lade die Umfrage mit ihren Teilnehmern und deren Antworten, um zu prüfen, ob Antworten existieren
+    # und um sie explizit zu löschen, falls nötig (obwohl cascade helfen sollte).
     result = await db.execute(
-        select(models.Survey).where(models.Survey.id == survey_id)
+        select(models.Survey)
+        .options(
+            selectinload(models.Survey.participants).selectinload(
+                models.SurveyParticipant.responses
+            ),
+            selectinload(models.Survey.elements),  # Auch Elemente laden für Cleanup
+        )
+        .where(models.Survey.id == survey_id)
     )
     db_survey = result.scalar_one_or_none()
 
@@ -631,21 +667,18 @@ async def delete_survey(
             status_code=status.HTTP_404_NOT_FOUND, detail="Umfrage nicht gefunden"
         )
 
-    # 2. Umfrage löschen
-    # Durch cascade="all, delete-orphan" in den Models werden SurveyElement,
-    # SurveyParticipant und deren Responses automatisch mitgelöscht.
-    await db.delete(db_survey)
-    # Commit wird durch get_db_session erledigt
-    print(f"Umfrage mit ID {survey_id} und zugehörige Daten zum Löschen markiert.")
+    if db_survey.participants:
+        print(
+            f"WARNUNG: Umfrage {survey_id} hat {len(db_survey.participants)} Teilnehmer. Zugehörige Antworten und Teilnehmerdaten werden ebenfalls gelöscht."
+        )
 
-    # 3. Bild-Cleanup im Hintergrund starten
-    # Wichtig: Der Cleanup-Task läuft, nachdem die DB-Transaktion committed wurde.
-    # Er wird also Bilder löschen, die zu dieser gerade gelöschten Umfrage gehörten.
-    background_tasks.add_task(perform_image_cleanup)
+    await db.delete(db_survey)
+    await db.commit()
     print(
-        f"Bild-Cleanup-Task für gelöschte Survey ID {survey_id} im Hintergrund gestartet."
+        f"Umfrage mit ID {survey_id} und alle zugehörigen Daten erfolgreich gelöscht."
     )
 
+    background_tasks.add_task(perform_image_cleanup)
     return schemas.SurveyDeleteResponse(
         survey_id=survey_id, message=f"Umfrage {survey_id} erfolgreich gelöscht."
     )
