@@ -101,7 +101,7 @@ class SurveyConfigCreate(BaseModel):
 
 # Hauptschema für das Erstellen einer neuen Umfrage
 class SurveyBase(BaseModel):  # Basis für Survey, ohne Validatoren für Create
-    survey_title: str
+    title: str
     survey_description: Optional[str] = None
     config: SurveyConfigCreate = Field(default_factory=SurveyConfigCreate)
     prolific_enabled: bool = Field(default=False)
@@ -117,7 +117,7 @@ class SurveyBase(BaseModel):  # Basis für Survey, ohne Validatoren für Create
 
 
 class SurveyCreate(SurveyBase):
-    survey_title: str = Field("Neue Umfrage", min_length=1)  # Überschreibe für Default
+    title: str = Field("Neue Umfrage", min_length=1)  # Überschreibe für Default
     questions: List[SurveyElementCreate] = []
 
 
@@ -240,7 +240,7 @@ class SurveyResultsAdminResponse(BaseModel):
     """Gesamte Ergebnisübersicht für eine Umfrage für den Admin."""
 
     survey_id: int
-    survey_title: str
+    title: str
     total_participants: int
     participants: List[ParticipantResultDetail] = []
 

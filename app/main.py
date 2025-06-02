@@ -451,12 +451,12 @@ async def create_survey(
     Erstellt eine neue Umfrage und deren Elemente in der Datenbank.
     """
     print(
-        f"Admin '{admin_user['username']}' erstellt eine neue Umfrage: '{survey_in.survey_title}'"
+        f"Admin '{admin_user['username']}' erstellt eine neue Umfrage: '{survey_in.title}'"
     )
 
     # 1. Erstelle den Haupteintrag für die Umfrage
     new_survey = models.Survey(
-        title=survey_in.survey_title,
+        title=survey_in.title,
         description=survey_in.survey_description,
         config=survey_in.config.model_dump(),
         prolific_enabled=survey_in.prolific_enabled,
@@ -522,7 +522,7 @@ async def get_survey(survey_id: int, db: AsyncSession = Depends(get_db_session))
 
     return schemas.SurveyResponse(
         id=survey.id,
-        survey_title=survey.title,
+        title=survey.title,
         survey_description=survey.description,
         config=survey.config or {},
         created_at=survey.created_at,
@@ -587,7 +587,7 @@ async def update_survey(
         print(f"Alle Teilnehmer und deren Antworten für Umfrage {survey_id} gelöscht.")
 
     # 3. Felder der Umfrage aktualisieren
-    db_survey.title = survey_in.survey_title
+    db_survey.title = survey_in.title
     db_survey.description = survey_in.survey_description
     db_survey.config = survey_in.config.model_dump()
     db_survey.prolific_enabled = survey_in.prolific_enabled
@@ -813,7 +813,7 @@ async def get_survey_results_for_admin(
 
     return schemas.SurveyResultsAdminResponse(
         survey_id=survey.id,
-        survey_title=survey.title,
+        title=survey.title,
         total_participants=len(db_participants),
         participants=participant_details_list,
     )
@@ -1012,7 +1012,7 @@ async def export_all_data_nested(db: AsyncSession = Depends(get_db_session)):
         ]
         exported_survey = schemas.SurveyFullNestedExport(
             id=survey_obj.id,
-            survey_title=survey_obj.title,
+            title=survey_obj.title,
             survey_description=survey_obj.description,
             config=survey_obj.config,
             created_at=survey_obj.created_at,
