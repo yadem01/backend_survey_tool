@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.sql import func  # Für DateTime Default
 from sqlalchemy.orm import selectinload, joinedload
+from sqlalchemy import delete
 
 from fastapi.security import OAuth2PasswordBearer
 from fastapi import Header
@@ -648,15 +649,14 @@ async def delete_survey(
 ):
     print(f"Admin '{admin_user['username']}' löscht Umfrage ID: {survey_id}")
 
-    # Lade die Umfrage mit ihren Teilnehmern und deren Antworten, um zu prüfen, ob Antworten existieren
-    # und um sie explizit zu löschen, falls nötig (obwohl cascade helfen sollte).
+    # Lade die Umfrage mit ihren Teilnehmern, deren Antworten und den Elementen
     result = await db.execute(
         select(models.Survey)
         .options(
             selectinload(models.Survey.participants).selectinload(
                 models.SurveyParticipant.responses
             ),
-            selectinload(models.Survey.elements),  # Auch Elemente laden für Cleanup
+            selectinload(models.Survey.elements),
         )
         .where(models.Survey.id == survey_id)
     )
@@ -671,11 +671,47 @@ async def delete_survey(
         print(
             f"WARNUNG: Umfrage {survey_id} hat {len(db_survey.participants)} Teilnehmer. Zugehörige Antworten und Teilnehmerdaten werden ebenfalls gelöscht."
         )
+        # Explizit Responses löschen, bevor Elemente oder Teilnehmer gelöscht werden,
+        # um ForeignKey-Konflikte mit survey_elements zu vermeiden.
+        participant_ids = [p.id for p in db_survey.participants]
+        if participant_ids:
+            # Lösche alle Responses, die zu den Teilnehmern dieser Umfrage gehören
+            stmt_delete_responses = delete(models.Response).where(
+                models.Response.participant_id.in_(participant_ids)
+            )
+            await db.execute(stmt_delete_responses)
+            print(
+                f"Alle Responses für Teilnehmer der Umfrage {survey_id} zum Löschen markiert."
+            )
+            await (
+                db.flush()
+            )  # Sicherstellen, dass Responses vor dem Rest gelöscht werden
 
+        # Jetzt die Teilnehmer löschen (dies sollte jetzt keine FK-Probleme mehr bei Responses verursachen)
+        for participant in db_survey.participants:
+            await db.delete(participant)
+        await db.flush()  # Teilnehmer löschen
+        print(f"Alle Teilnehmer für Umfrage {survey_id} gelöscht.")
+        db_survey.participants.clear()  # ORM-State aktualisieren
+
+    # Jetzt die Elemente löschen (sollte jetzt keine FK-Probleme mit Responses verursachen)
+    if db_survey.elements:
+        print(f"Lösche {len(db_survey.elements)} Elemente für Survey ID {survey_id}")
+        for element in db_survey.elements:
+            await db.delete(element)
+        await db.flush()  # Elemente löschen
+        db_survey.elements.clear()  # ORM-State aktualisieren
+        print(f"Alle Elemente für Umfrage {survey_id} gelöscht.")
+
+    # Zuletzt die Umfrage selbst löschen
     await db.delete(db_survey)
+    print(f"Umfrage mit ID {survey_id} zum Löschen markiert.")
+
+    # Commit wird am Ende der Session durch die Dependency `get_db_session` ausgeführt,
+    # oder explizit hier, wenn man die Kontrolle behalten will:
     await db.commit()
     print(
-        f"Umfrage mit ID {survey_id} und alle zugehörigen Daten erfolgreich gelöscht."
+        f"Umfrage mit ID {survey_id} und alle zugehörigen Daten erfolgreich aus der DB gelöscht."
     )
 
     background_tasks.add_task(perform_image_cleanup)

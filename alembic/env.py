@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 
 from alembic import context
 
-# NEU: Importiere os und sys für Pfadmanipulation und dotenv für .env-Handling
+# Importiere os und sys für Pfadmanipulation und dotenv für .env-Handling
 import os
 import sys
 from dotenv import load_dotenv
@@ -21,7 +21,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# NEU: Lade Umgebungsvariablen aus der .env-Datei im Projekt-Root
+# Lade Umgebungsvariablen aus der .env-Datei im Projekt-Root
 # Dies stellt sicher, dass DATABASE_URL verfügbar ist.
 dotenv_path = os.path.join(project_root, ".env")
 if os.path.exists(dotenv_path):
