@@ -1,11 +1,13 @@
 import os
-import uuid  # Für eindeutige Dateinamen
-import shutil  # Für Dateioperationen
+import uuid
+import shutil
 import csv
 import io
 import json
-from pathlib import Path  # Für Pfadoperationen
-from typing import List, Optional  # Für Typannotationen
+import re
+import html
+from pathlib import Path
+from typing import List, Optional
 from contextlib import asynccontextmanager
 
 from fastapi import (
@@ -1041,6 +1043,21 @@ async def export_all_data_nested(db: AsyncSession = Depends(get_db_session)):
     return schemas.AllDataNestedExport(surveys=exported_surveys)
 
 
+# Hilfsfunktion zum Entfernen von HTML-Tags und Dekodieren von Entitäten
+def strip_html_and_decode_entities(html_string: Optional[str]) -> Optional[str]:
+    if not html_string:
+        return None
+    # Einfache Regex, um die meisten gängigen Tags zu entfernen
+    # Dies ist nicht perfekt für komplexes HTML, aber für unsere Zwecke (strong, em, p, h1-6, br) ausreichend.
+    text_without_tags = re.sub(
+        r"<[^>]+>", " ", html_string
+    )  # Ersetzt Tags durch Leerzeichen
+    # Dekodiere HTML-Entitäten wie &auml;, &uuml;, &szlig;, &amp; etc.
+    text_decoded = html.unescape(text_without_tags)
+    # Mehrfache Leerzeichen durch ein einzelnes ersetzen und führende/folgende Leerzeichen entfernen
+    return " ".join(text_decoded.split()).strip()
+
+
 @app.get(
     "/api/admin/export/survey/{survey_id}/csv",
     response_description="CSV file of survey results",
@@ -1149,9 +1166,7 @@ async def export_survey_results_to_csv(
             "page_durations_log_json": json.dumps(p.page_durations_log)
             if p.page_durations_log
             else None,
-            "selected_task_group_condition": getattr(
-                p, "selected_task_group_id", None
-            ),  # Falls Feld existiert, sonst None
+            "selected_task_group_condition": getattr(p, "selected_task_group_id", None),
         }
 
         total_paste_survey = 0
@@ -1192,15 +1207,13 @@ async def export_survey_results_to_csv(
                 row[f"{base_q_header}_llm_chat_history_json"] = None
 
             # Add question element's own metadata
-            row[f"{base_q_header}_text"] = q_el.question_text
+            row[f"{base_q_header}_text"] = strip_html_and_decode_entities(
+                q_el.question_text
+            )
             row[f"{base_q_header}_type"] = q_el.question_type
-            row[f"{base_q_header}_task_identifier"] = q_el.task_identifier  # NEU
-            row[f"{base_q_header}_randomization_group"] = (
-                q_el.randomization_group
-            )  # NEU
-            row[f"{base_q_header}_llm_enabled_by_config"] = (
-                q_el.llm_assistance_enabled
-            )  # NEU (aus der Konfiguration des Elements)
+            row[f"{base_q_header}_task_identifier"] = q_el.task_identifier
+            row[f"{base_q_header}_randomization_group"] = q_el.randomization_group
+            row[f"{base_q_header}_llm_enabled_by_config"] = q_el.llm_assistance_enabled
 
         row["total_paste_count_survey"] = total_paste_survey
         row["total_focus_lost_count_survey"] = total_focus_lost_survey
@@ -1210,7 +1223,7 @@ async def export_survey_results_to_csv(
     output.seek(0)
 
     safe_survey_title = "".join(c if c.isalnum() else "_" for c in survey.title)
-    filename = f"survey_{survey_id}_{safe_survey_title}_export_extended.csv"  # Geänderter Dateiname
+    filename = f"survey_{survey_id}_{safe_survey_title}_export_extended.csv"
 
     return StreamingResponse(
         iter([output.getvalue()]),
