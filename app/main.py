@@ -629,6 +629,7 @@ async def update_survey(
             "id" in element_dict
         ):  # Entferne Frontend-ID, da DB neue generiert oder Konflikte vermeidet
             del element_dict["id"]
+        element_dict["max_duration_seconds"] = element_data.max_duration_seconds
         element_dict["survey_id"] = survey_id  # Verknüpfe mit der aktuellen Umfrage
         new_element = models.SurveyElement(**element_dict)
         elements_to_add.append(new_element)
