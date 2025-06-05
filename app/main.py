@@ -863,15 +863,14 @@ async def generate_llm_text(request_data: schemas.LLMRequest):
         messages_for_openai.append({"role": msg.role, "content": msg.content})
 
     try:
+        openai_model = os.getenv("OPENAI_MODEL", "gpt-4.1-nano")
         print(
-            f"Sende an OpenAI (gpt-4.1-nano) mit {len(messages_for_openai)} Nachrichten..."
+            f"Sende an OpenAI ({openai_model}) mit {len(messages_for_openai)} Nachrichten..."
         )
+
         chat_completion = await openai_client.chat.completions.create(
             messages=messages_for_openai,
-            model="gpt-4.1-nano",
-            # Weitere Parameter wie temperature, max_tokens etc. könnten hier gesetzt werden
-            # temperature=0.7,
-            # max_tokens=150
+            model=openai_model,
         )
         generated_text = chat_completion.choices[0].message.content
         model_used = chat_completion.model

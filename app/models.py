@@ -75,14 +75,11 @@ class SurveyElement(Base):
     )  # Zur Gruppierung von Elementen zu einem Task
     references_element_id = Column(
         Integer, ForeignKey("survey_elements.id"), nullable=True
-    )  # Verweis auf ein anderes Element
+    )  # Verweis auf ein anderes Element (wip, zurückgestellt)
+    max_duration_seconds = Column(Integer, nullable=True, default=None)
 
     # Beziehung zurück zu Survey
     survey = relationship("Survey", back_populates="elements")
-
-    # Optionale Beziehung für den self-referential ForeignKey (um z.B. das referenzierte Element leicht zu laden)
-    # referenced_element = relationship("SurveyElement", remote_side=[id], foreign_keys=[references_element_id], uselist=False)
-    # responses_to_reference = relationship("SurveyElement", back_populates="referenced_element", foreign_keys=[references_element_id], remote_side=[id])
 
 
 class SurveyParticipant(Base):

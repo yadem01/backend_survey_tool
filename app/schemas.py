@@ -80,6 +80,7 @@ class SurveyElementBase(BaseModel):  # Basis für Element, ohne Validatoren für
     maxlength: Optional[int] = None
     task_identifier: Optional[str] = Field(default=None)
     references_element_id: Optional[int] = Field(default=None)
+    max_duration_seconds: Optional[int] = Field(default=None, ge=0)
 
 
 class SurveyElementCreate(SurveyElementBase):
