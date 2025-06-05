@@ -789,6 +789,9 @@ async def get_survey_results_for_admin(
                     references_element_id=survey_element.references_element_id
                     if survey_element
                     else None,
+                    randomization_group=survey_element.randomization_group
+                    if survey_element
+                    else None,
                     response_value=resp.response_value,
                     llm_chat_history=resp.llm_chat_history,
                     paste_count=resp.paste_count,

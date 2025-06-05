@@ -205,6 +205,7 @@ class AnswerDetail(BaseModel):
     question_type: Optional[str] = None
     task_identifier: Optional[str] = None
     references_element_id: Optional[int] = None
+    randomization_group: Optional[str] = None
 
     # Tracking-Felder pro Antwort
     paste_count: Optional[int] = None
