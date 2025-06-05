@@ -1,6 +1,9 @@
 import os
 import uuid  # Für eindeutige Dateinamen
 import shutil  # Für Dateioperationen
+import csv
+import io
+import json
 from pathlib import Path  # Für Pfadoperationen
 from typing import List, Optional  # Für Typannotationen
 from contextlib import asynccontextmanager
@@ -13,17 +16,17 @@ from fastapi import (
     File,
     status,
     BackgroundTasks,
+    Header,
 )
-from fastapi.staticfiles import StaticFiles  # Für statische Dateien
-from fastapi.middleware.cors import CORSMiddleware  # Für Frontend-Zugriff
+from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.sql import func  # Für DateTime Default
-from sqlalchemy.orm import selectinload, joinedload
+from sqlalchemy.orm import selectinload
 from sqlalchemy import delete
-
-from fastapi.security import OAuth2PasswordBearer
-from fastapi import Header
 
 from openai import AsyncOpenAI
 
@@ -1033,6 +1036,184 @@ async def export_all_data_nested(db: AsyncSession = Depends(get_db_session)):
         exported_surveys.append(exported_survey)
 
     return schemas.AllDataNestedExport(surveys=exported_surveys)
+
+
+@app.get(
+    "/api/admin/export/survey/{survey_id}/csv",
+    response_description="CSV file of survey results",
+    dependencies=[
+        Depends(verify_admin_token)
+    ],  # Stelle sicher, dass verify_admin_token hier referenziert wird
+)
+async def export_survey_results_to_csv(
+    survey_id: int,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: dict = Depends(
+        verify_admin_token
+    ),  # admin_user wird von der Dependency injected
+):
+    """
+    Exports all results for a given survey to a CSV file.
+    Includes participant data, their answers, and contextual information for each question.
+    """
+    print(
+        f"Admin '{admin_user.get('username', 'Unknown')}' requested CSV export for survey ID {survey_id}."
+    )
+
+    # 1. Fetch Survey details
+    survey_stmt = select(models.Survey).where(models.Survey.id == survey_id)
+    survey_result = await db.execute(survey_stmt)
+    survey = survey_result.scalar_one_or_none()
+    if not survey:
+        raise HTTPException(status_code=404, detail="Survey not found")
+
+    # 2. Fetch all question elements for this survey to define CSV headers
+    elements_stmt = (
+        select(models.SurveyElement)
+        .where(models.SurveyElement.survey_id == survey_id)
+        .order_by(models.SurveyElement.page, models.SurveyElement.ordering)
+    )
+    elements_result = await db.execute(elements_stmt)
+    all_survey_elements = elements_result.scalars().all()  # Alle Elemente für Infos
+
+    question_elements = [
+        el for el in all_survey_elements if el.element_type == "question"
+    ]
+
+    # 3. Define CSV Headers
+    headers = [
+        "participant_db_id",
+        "survey_id",
+        "prolific_pid",
+        "study_id",
+        "session_id",
+        "start_time",
+        "end_time",
+        "consent_given",
+        "completed",
+        "page_durations_log_json",
+        "total_paste_count_survey",
+        "total_focus_lost_count_survey",
+        "selected_task_group_condition",  # Platzhalter für spätere komplexere Randomisierung
+    ]
+
+    for q_el in question_elements:
+        base_q_header = f"q_{q_el.id}"
+        headers.extend(
+            [
+                f"{base_q_header}_text",
+                f"{base_q_header}_type",
+                f"{base_q_header}_task_identifier",
+                f"{base_q_header}_randomization_group",
+                f"{base_q_header}_llm_enabled_by_config",
+                f"{base_q_header}_response_value_json",
+                f"{base_q_header}_displayed_page",
+                f"{base_q_header}_displayed_ordering",
+                f"{base_q_header}_paste_count",
+                f"{base_q_header}_focus_lost_count",
+                f"{base_q_header}_llm_chat_history_json",
+            ]
+        )
+
+    # 4. Fetch all participants and their responses
+    participants_stmt = (
+        select(models.SurveyParticipant)
+        .where(models.SurveyParticipant.survey_id == survey_id)
+        .options(selectinload(models.SurveyParticipant.responses))
+        .order_by(models.SurveyParticipant.start_time.desc())
+    )
+    participants_result = await db.execute(participants_stmt)
+    db_participants = participants_result.scalars().unique().all()
+
+    # 5. Prepare data for CSV
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output, fieldnames=headers, extrasaction="ignore", quoting=csv.QUOTE_ALL
+    )
+    writer.writeheader()
+
+    for p in db_participants:
+        row = {
+            "participant_db_id": p.id,
+            "survey_id": p.survey_id,
+            "prolific_pid": p.prolific_pid,
+            "study_id": p.study_id,
+            "session_id": p.session_id,
+            "start_time": p.start_time.isoformat() if p.start_time else None,
+            "end_time": p.end_time.isoformat() if p.end_time else None,
+            "consent_given": p.consent_given,
+            "completed": p.completed,
+            "page_durations_log_json": json.dumps(p.page_durations_log)
+            if p.page_durations_log
+            else None,
+            "selected_task_group_condition": getattr(
+                p, "selected_task_group_id", None
+            ),  # Falls Feld existiert, sonst None
+        }
+
+        total_paste_survey = 0
+        total_focus_lost_survey = 0
+        responses_map = {str(resp.survey_element_id): resp for resp in p.responses}
+
+        for q_el in question_elements:
+            q_id_str = str(q_el.id)
+            base_q_header = f"q_{q_el.id}"
+            response_for_q = responses_map.get(q_id_str)
+
+            if response_for_q:
+                row[f"{base_q_header}_response_value_json"] = json.dumps(
+                    response_for_q.response_value
+                )
+                row[f"{base_q_header}_displayed_page"] = response_for_q.displayed_page
+                row[f"{base_q_header}_displayed_ordering"] = (
+                    response_for_q.displayed_ordering
+                )
+                row[f"{base_q_header}_paste_count"] = response_for_q.paste_count
+                row[f"{base_q_header}_focus_lost_count"] = (
+                    response_for_q.focus_lost_count
+                )
+                row[f"{base_q_header}_llm_chat_history_json"] = (
+                    json.dumps(response_for_q.llm_chat_history)
+                    if response_for_q.llm_chat_history
+                    else None
+                )
+
+                total_paste_survey += response_for_q.paste_count or 0
+                total_focus_lost_survey += response_for_q.focus_lost_count or 0
+            else:
+                row[f"{base_q_header}_response_value_json"] = None
+                row[f"{base_q_header}_displayed_page"] = None
+                row[f"{base_q_header}_displayed_ordering"] = None
+                row[f"{base_q_header}_paste_count"] = None
+                row[f"{base_q_header}_focus_lost_count"] = None
+                row[f"{base_q_header}_llm_chat_history_json"] = None
+
+            # Add question element's own metadata
+            row[f"{base_q_header}_text"] = q_el.question_text
+            row[f"{base_q_header}_type"] = q_el.question_type
+            row[f"{base_q_header}_task_identifier"] = q_el.task_identifier  # NEU
+            row[f"{base_q_header}_randomization_group"] = (
+                q_el.randomization_group
+            )  # NEU
+            row[f"{base_q_header}_llm_enabled_by_config"] = (
+                q_el.llm_assistance_enabled
+            )  # NEU (aus der Konfiguration des Elements)
+
+        row["total_paste_count_survey"] = total_paste_survey
+        row["total_focus_lost_count_survey"] = total_focus_lost_survey
+
+        writer.writerow(row)
+
+    output.seek(0)
+
+    safe_survey_title = "".join(c if c.isalnum() else "_" for c in survey.title)
+    filename = f"survey_{survey_id}_{safe_survey_title}_export_extended.csv"  # Geänderter Dateiname
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 # --- Starten der Anwendung (wie zuvor) ---
