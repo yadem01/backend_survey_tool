@@ -321,14 +321,21 @@ async def save_survey_results(
             status_code=400, detail="Keine Antworten zum Speichern vorhanden."
         )
 
+    survey = await db.get(models.Survey, survey_id_extracted)
+    if not survey:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Survey with ID {survey_id_extracted} not found, cannot save results.",
+        )
+
     participant_start_time_to_use = result_data.participant_start_time or func.now()
 
     # 1. Erstelle den Teilnehmer-Eintrag
     new_participant = models.SurveyParticipant(
         survey_id=survey_id_extracted,
-        prolific_pid=result_data.prolific_pid,
-        study_id=result_data.study_id,  # study_id hinzugefügt
-        session_id=result_data.session_id,  # session_id hinzugefügt
+        prolific_pid=result_data.prolific_pid if survey.prolific_enabled else None,
+        study_id=result_data.study_id if survey.prolific_enabled else None,
+        session_id=result_data.session_id if survey.prolific_enabled else None,
         consent_given=result_data.consent_given,
         start_time=participant_start_time_to_use,
         end_time=func.now(),  # Aktuelle Zeit als Endzeit
