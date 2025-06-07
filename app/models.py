@@ -96,6 +96,7 @@ class SurveyParticipant(Base):
     end_time = Column(DateTime(timezone=True), nullable=True)
     consent_given = Column(Boolean, default=False)
     completed = Column(Boolean, default=False)
+    is_test_run = Column(Boolean, default=False)
 
     page_durations_log = Column(
         JSON, nullable=True

@@ -34,6 +34,7 @@ class SurveyResultCreate(BaseModel):
     prolific_pid: Optional[str] = None
     study_id: Optional[str] = None
     session_id: Optional[str] = None
+    is_test_run: Optional[bool] = False
     consent_given: bool
     answers: Dict[str, Union[str, List[str], int, float, bool, None]]
     llm_chat_histories: Optional[Dict[str, List[ChatMessage]]] = Field(
@@ -231,6 +232,7 @@ class ParticipantResultDetail(BaseModel):
     end_time: Optional[datetime] = None
     consent_given: bool
     completed: bool
+    is_test_run: Optional[bool] = False
     responses: List[AnswerDetail] = []
 
     page_durations_log: Optional[Dict[str, int]] = None
@@ -280,6 +282,7 @@ class SurveyParticipantExport(BaseModel):
     end_time: Optional[datetime] = None
     consent_given: bool
     completed: bool
+    is_test_run: Optional[bool] = False
     page_durations_log: Optional[Dict[str, int]] = None
     model_config = ConfigDict(from_attributes=True)
 
