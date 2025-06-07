@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.sql import func  # Für DateTime Default
 from sqlalchemy.orm import selectinload
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 
 from openai import AsyncOpenAI
 
@@ -700,32 +700,41 @@ async def delete_survey(
                 db.flush()
             )  # Sicherstellen, dass Responses vor dem Rest gelöscht werden
 
-        # Jetzt die Teilnehmer löschen (dies sollte jetzt keine FK-Probleme mehr bei Responses verursachen)
         for participant in db_survey.participants:
             await db.delete(participant)
         await db.flush()  # Teilnehmer löschen
         print(f"Alle Teilnehmer für Umfrage {survey_id} gelöscht.")
         db_survey.participants.clear()  # ORM-State aktualisieren
 
-    # Jetzt die Elemente löschen (sollte jetzt keine FK-Probleme mit Responses verursachen)
     if db_survey.elements:
         print(f"Lösche {len(db_survey.elements)} Elemente für Survey ID {survey_id}")
-        for element in db_survey.elements:
-            await db.delete(element)
-        await db.flush()  # Elemente löschen
-        db_survey.elements.clear()  # ORM-State aktualisieren
+        element_ids = [el.id for el in db_survey.elements]
+
+        # ### Breche alle Self-Referencing Foreign Keys ###
+        # Setze `references_element_id` auf NULL für alle Elemente dieser Umfrage,
+        # bevor wir versuchen, sie zu löschen.
+        stmt_break_references = (
+            update(models.SurveyElement)
+            .where(models.SurveyElement.id.in_(element_ids))
+            .values(references_element_id=None)
+        )
+        await db.execute(stmt_break_references)
+        print("Self-referencing foreign keys für Elemente der Umfrage entfernt.")
+        # ### ENDE NEUER SCHRITT ###
+
+        # Jetzt können alle Elemente sicher gelöscht werden
+        stmt_delete_elements = delete(models.SurveyElement).where(
+            models.SurveyElement.id.in_(element_ids)
+        )
+        await db.execute(stmt_delete_elements)
         print(f"Alle Elemente für Umfrage {survey_id} gelöscht.")
 
-    # Zuletzt die Umfrage selbst löschen
-    await db.delete(db_survey)
-    print(f"Umfrage mit ID {survey_id} zum Löschen markiert.")
+        await db.delete(db_survey)
+        print(f"Umfrage mit ID {survey_id} zum Löschen markiert.")
 
-    # Commit wird am Ende der Session durch die Dependency `get_db_session` ausgeführt,
-    # oder explizit hier, wenn man die Kontrolle behalten will:
-    await db.commit()
-    print(
-        f"Umfrage mit ID {survey_id} und alle zugehörigen Daten erfolgreich aus der DB gelöscht."
-    )
+        print(
+            f"Umfrage mit ID {survey_id} und alle zugehörigen Daten erfolgreich aus der DB gelöscht."
+        )
 
     background_tasks.add_task(perform_image_cleanup)
     return schemas.SurveyDeleteResponse(
