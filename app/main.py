@@ -336,6 +336,7 @@ async def save_survey_results(
         prolific_pid=result_data.prolific_pid if survey.prolific_enabled else None,
         study_id=result_data.study_id if survey.prolific_enabled else None,
         session_id=result_data.session_id if survey.prolific_enabled else None,
+        is_test_run=result_data.is_test_run if result_data.is_test_run else False,
         consent_given=result_data.consent_given,
         start_time=participant_start_time_to_use,
         end_time=func.now(),  # Aktuelle Zeit als Endzeit
@@ -831,6 +832,7 @@ async def get_survey_results_for_admin(
                 end_time=p.end_time,
                 consent_given=p.consent_given,
                 completed=p.completed,
+                is_test_run=p.is_test_run,
                 responses=answer_details_list,
                 page_durations_log=p.page_durations_log,
             )
@@ -1005,6 +1007,7 @@ async def export_all_data_nested(db: AsyncSession = Depends(get_db_session)):
             end_time=p_obj.end_time,
             consent_given=p_obj.consent_given,
             completed=p_obj.completed,
+            is_test_run=p_obj.is_test_run,
             responses=answer_details_list,
             page_durations_log=p_obj.page_durations_log,
         )
@@ -1127,6 +1130,7 @@ async def export_survey_results_to_csv(
         "end_time",
         "consent_given",
         "completed",
+        "is_test_run",
         "page_durations_log_json",
         "total_paste_count_survey",
         "total_focus_lost_count_survey",
@@ -1179,6 +1183,7 @@ async def export_survey_results_to_csv(
             "end_time": p.end_time.isoformat() if p.end_time else None,
             "consent_given": p.consent_given,
             "completed": p.completed,
+            "is_test_run": p.is_test_run,
             "page_durations_log_json": json.dumps(p.page_durations_log)
             if p.page_durations_log
             else None,
