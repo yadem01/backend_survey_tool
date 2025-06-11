@@ -7,7 +7,7 @@ import json
 import re
 import html
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Set
 from contextlib import asynccontextmanager
 
 from fastapi import (
@@ -786,6 +786,7 @@ async def get_survey_results_for_admin(
     participant_details_list: List[schemas.ParticipantResultDetail] = []
     for p in db_participants:
         answer_details_list: List[schemas.AnswerDetail] = []
+        task_ids_for_participant: Set[str] = set()
         for resp in p.responses:
             # Finde das zugehörige SurveyElement aus der vorgeladenen Map
             survey_element = elements_map.get(resp.survey_element_id)
@@ -821,6 +822,8 @@ async def get_survey_results_for_admin(
                     displayed_ordering=resp.displayed_ordering,
                 )
             )
+            if survey_element and survey_element.task_identifier:
+                task_ids_for_participant.add(survey_element.task_identifier)
 
         participant_details_list.append(
             schemas.ParticipantResultDetail(
@@ -834,6 +837,7 @@ async def get_survey_results_for_admin(
                 completed=p.completed,
                 is_test_run=p.is_test_run,
                 responses=answer_details_list,
+                task_identifiers_seen=sorted(task_ids_for_participant),
                 page_durations_log=p.page_durations_log,
             )
         )
@@ -998,6 +1002,14 @@ async def export_all_data_nested(db: AsyncSession = Depends(get_db_session)):
             map_answer_detail(resp_obj, elements_map.get(resp_obj.survey_element_id))
             for resp_obj in p_obj.responses
         ]
+        task_ids_for_participant: Set[str] = {
+            el.task_identifier
+            for el in (
+                elements_map.get(resp_obj.survey_element_id)
+                for resp_obj in p_obj.responses
+            )
+            if el and el.task_identifier
+        }
         return schemas.ParticipantResultDetail(
             participant_id=p_obj.id,
             prolific_pid=p_obj.prolific_pid,
@@ -1009,6 +1021,7 @@ async def export_all_data_nested(db: AsyncSession = Depends(get_db_session)):
             completed=p_obj.completed,
             is_test_run=p_obj.is_test_run,
             responses=answer_details_list,
+            task_identifiers_seen=sorted(task_ids_for_participant),
             page_durations_log=p_obj.page_durations_log,
         )
 
