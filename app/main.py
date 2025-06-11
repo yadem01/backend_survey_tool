@@ -1166,7 +1166,8 @@ async def export_survey_results_to_csv(
             per_question_headers.append(f"{base_q_header}_paste_count")
         if track_tab_focus:
             per_question_headers.append(f"{base_q_header}_focus_lost_count")
-        per_question_headers.append(f"{base_q_header}_llm_chat_history_json")
+        if q_el.llm_assistance_enabled:
+            per_question_headers.append(f"{base_q_header}_llm_chat_history_json")
         headers.extend(per_question_headers)
 
     # 4. Fetch all participants and their responses
@@ -1237,11 +1238,12 @@ async def export_survey_results_to_csv(
                         response_for_q.focus_lost_count
                     )
                     total_focus_lost_survey += response_for_q.focus_lost_count or 0
-                row[f"{base_q_header}_llm_chat_history_json"] = (
-                    json.dumps(response_for_q.llm_chat_history)
-                    if response_for_q.llm_chat_history
-                    else None
-                )
+                if q_el.llm_assistance_enabled:
+                    row[f"{base_q_header}_llm_chat_history_json"] = (
+                        json.dumps(response_for_q.llm_chat_history)
+                        if response_for_q.llm_chat_history
+                        else None
+                    )
             else:
                 row[f"{base_q_header}_response_value_json"] = None
                 row[f"{base_q_header}_displayed_page"] = None
@@ -1250,7 +1252,8 @@ async def export_survey_results_to_csv(
                     row[f"{base_q_header}_paste_count"] = None
                 if track_tab_focus:
                     row[f"{base_q_header}_focus_lost_count"] = None
-                row[f"{base_q_header}_llm_chat_history_json"] = None
+                if q_el.llm_assistance_enabled:
+                    row[f"{base_q_header}_llm_chat_history_json"] = None
 
             # Add question element's own metadata
             row[f"{base_q_header}_text"] = strip_html_and_decode_entities(
