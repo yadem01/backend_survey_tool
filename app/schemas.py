@@ -234,7 +234,6 @@ class ParticipantResultDetail(BaseModel):
     completed: bool
     is_test_run: Optional[bool] = False
     responses: List[AnswerDetail] = []
-    task_identifiers_seen: List[str] = []
 
     page_durations_log: Optional[Dict[str, int]] = None
 

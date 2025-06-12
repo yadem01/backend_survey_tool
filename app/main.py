@@ -7,7 +7,7 @@ import json
 import re
 import html
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import List, Optional
 from contextlib import asynccontextmanager
 
 from fastapi import (
@@ -786,7 +786,6 @@ async def get_survey_results_for_admin(
     participant_details_list: List[schemas.ParticipantResultDetail] = []
     for p in db_participants:
         answer_details_list: List[schemas.AnswerDetail] = []
-        task_ids_for_participant: Set[str] = set()
         for resp in p.responses:
             # Finde das zugehörige SurveyElement aus der vorgeladenen Map
             survey_element = elements_map.get(resp.survey_element_id)
@@ -822,8 +821,6 @@ async def get_survey_results_for_admin(
                     displayed_ordering=resp.displayed_ordering,
                 )
             )
-            if survey_element and survey_element.task_identifier:
-                task_ids_for_participant.add(survey_element.task_identifier)
 
         participant_details_list.append(
             schemas.ParticipantResultDetail(
@@ -837,7 +834,6 @@ async def get_survey_results_for_admin(
                 completed=p.completed,
                 is_test_run=p.is_test_run,
                 responses=answer_details_list,
-                task_identifiers_seen=sorted(task_ids_for_participant),
                 page_durations_log=p.page_durations_log,
             )
         )
@@ -1002,14 +998,6 @@ async def export_all_data_nested(db: AsyncSession = Depends(get_db_session)):
             map_answer_detail(resp_obj, elements_map.get(resp_obj.survey_element_id))
             for resp_obj in p_obj.responses
         ]
-        task_ids_for_participant: Set[str] = {
-            el.task_identifier
-            for el in (
-                elements_map.get(resp_obj.survey_element_id)
-                for resp_obj in p_obj.responses
-            )
-            if el and el.task_identifier
-        }
         return schemas.ParticipantResultDetail(
             participant_id=p_obj.id,
             prolific_pid=p_obj.prolific_pid,
@@ -1021,7 +1009,6 @@ async def export_all_data_nested(db: AsyncSession = Depends(get_db_session)):
             completed=p_obj.completed,
             is_test_run=p_obj.is_test_run,
             responses=answer_details_list,
-            task_identifiers_seen=sorted(task_ids_for_participant),
             page_durations_log=p_obj.page_durations_log,
         )
 
@@ -1163,6 +1150,7 @@ async def export_survey_results_to_csv(
     headers.append(
         "selected_task_group_condition"
     )  # Platzhalter für spätere komplexere Randomisierung
+    headers.append("task_identifiers_seen")
 
     for q_el in question_elements:
         base_q_header = f"q_{q_el.id}"
@@ -1228,6 +1216,7 @@ async def export_survey_results_to_csv(
         total_paste_survey = 0
         total_focus_lost_survey = 0
         responses_map = {str(resp.survey_element_id): resp for resp in p.responses}
+        task_ids_for_participant = set()
 
         for q_el in question_elements:
             q_id_str = str(q_el.id)
@@ -1255,6 +1244,8 @@ async def export_survey_results_to_csv(
                     if response_for_q.llm_chat_history
                     else None
                 )
+                if q_el.task_identifier:
+                    task_ids_for_participant.add(q_el.task_identifier)
             else:
                 row[f"{base_q_header}_response_value_json"] = None
                 row[f"{base_q_header}_displayed_page"] = None
@@ -1277,6 +1268,8 @@ async def export_survey_results_to_csv(
             row["total_paste_count_survey"] = total_paste_survey
         if track_tab_focus:
             row["total_focus_lost_count_survey"] = total_focus_lost_survey
+
+        row["task_identifiers_seen"] = ",".join(sorted(task_ids_for_participant))
 
         writer.writerow(row)
 
