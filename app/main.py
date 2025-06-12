@@ -1288,6 +1288,146 @@ async def export_survey_results_to_csv(
     )
 
 
+@app.get(
+    "/api/admin/export/survey/{survey_id}/csv_tidy",
+    response_description="Simplified CSV file of survey results",
+    dependencies=[Depends(verify_admin_token)],
+)
+async def export_survey_results_to_csv_tidy(
+    survey_id: int,
+    db: AsyncSession = Depends(get_db_session),
+    admin_user: dict = Depends(verify_admin_token),
+):
+    """Export survey results in tidy format (one row per answer)."""
+
+    survey_stmt = select(models.Survey).where(models.Survey.id == survey_id)
+    survey_result = await db.execute(survey_stmt)
+    survey = survey_result.scalar_one_or_none()
+    if not survey:
+        raise HTTPException(status_code=404, detail="Survey not found")
+
+    track_copy_paste = getattr(survey, "track_copy_paste", False)
+    track_tab_focus = getattr(survey, "track_tab_focus", False)
+    track_page_duration = getattr(survey, "track_page_duration", False)
+
+    elements_stmt = (
+        select(models.SurveyElement)
+        .where(models.SurveyElement.survey_id == survey_id)
+        .order_by(models.SurveyElement.page, models.SurveyElement.ordering)
+    )
+    elements_result = await db.execute(elements_stmt)
+    question_elements = [
+        el for el in elements_result.scalars().all() if el.element_type == "question"
+    ]
+    elements_map = {el.id: el for el in question_elements}
+
+    headers = [
+        "participant_db_id",
+        "survey_id",
+        "prolific_pid",
+        "study_id",
+        "session_id",
+        "start_time",
+        "end_time",
+        "consent_given",
+        "completed",
+        "is_test_run",
+        "selected_task_group_condition",
+        "task_identifiers_seen",
+        "survey_element_id",
+        "question_text",
+        "question_type",
+        "task_identifier",
+        "llm_enabled_by_config",
+        "response_value_json",
+        "displayed_page",
+        "displayed_ordering",
+    ]
+
+    if track_copy_paste:
+        headers.append("paste_count")
+    if track_tab_focus:
+        headers.append("focus_lost_count")
+    if track_page_duration:
+        headers.append("page_durations_log_json")
+    headers.append("llm_chat_history_json")
+
+    participants_stmt = (
+        select(models.SurveyParticipant)
+        .where(models.SurveyParticipant.survey_id == survey_id)
+        .options(selectinload(models.SurveyParticipant.responses))
+        .order_by(models.SurveyParticipant.start_time.desc())
+    )
+    participants_result = await db.execute(participants_stmt)
+    db_participants = participants_result.scalars().unique().all()
+
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output, fieldnames=headers, extrasaction="ignore", quoting=csv.QUOTE_ALL
+    )
+    writer.writeheader()
+
+    for p in db_participants:
+        task_ids_for_participant = {
+            elements_map[resp.survey_element_id].task_identifier
+            for resp in p.responses
+            if elements_map.get(resp.survey_element_id)
+            and elements_map[resp.survey_element_id].task_identifier
+        }
+
+        for resp in p.responses:
+            q_el = elements_map.get(resp.survey_element_id)
+            if not q_el:
+                continue
+
+            row = {
+                "participant_db_id": p.id,
+                "survey_id": p.survey_id,
+                "prolific_pid": p.prolific_pid,
+                "study_id": p.study_id,
+                "session_id": p.session_id,
+                "start_time": p.start_time.isoformat() if p.start_time else None,
+                "end_time": p.end_time.isoformat() if p.end_time else None,
+                "consent_given": p.consent_given,
+                "completed": p.completed,
+                "is_test_run": p.is_test_run,
+                "selected_task_group_condition": getattr(p, "selected_task_group_id", None),
+                "task_identifiers_seen": ",".join(sorted(task_ids_for_participant)),
+                "survey_element_id": q_el.id,
+                "question_text": strip_html_and_decode_entities(q_el.question_text),
+                "question_type": q_el.question_type,
+                "task_identifier": q_el.task_identifier,
+                "llm_enabled_by_config": q_el.llm_assistance_enabled,
+                "response_value_json": json.dumps(resp.response_value),
+                "displayed_page": resp.displayed_page,
+                "displayed_ordering": resp.displayed_ordering,
+                "llm_chat_history_json": json.dumps(resp.llm_chat_history)
+                if resp.llm_chat_history
+                else None,
+            }
+
+            if track_copy_paste:
+                row["paste_count"] = resp.paste_count
+            if track_tab_focus:
+                row["focus_lost_count"] = resp.focus_lost_count
+            if track_page_duration:
+                row["page_durations_log_json"] = (
+                    json.dumps(p.page_durations_log) if p.page_durations_log else None
+                )
+
+            writer.writerow(row)
+
+    output.seek(0)
+    safe_survey_title = "".join(c if c.isalnum() else "_" for c in survey.title)
+    filename = f"survey_{survey_id}_{safe_survey_title}_export_tidy.csv"
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
 # --- Starten der Anwendung (wie zuvor) ---
 
 if __name__ == "__main__":
