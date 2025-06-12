@@ -1,55 +1,55 @@
 
 ## Setup & Installation
 
-**Voraussetzungen:**
+**Prerequisites:**
 
 * Python 3.8+
 * pip (Python package installer)
-* Optional: PostgreSQL-Server (falls nicht SQLite verwendet wird)
+* Optional: PostgreSQL server (if not using SQLite)
 
-**Schritte:**
+**Steps:**
 
-1.  **Repository klonen:**
+1.  **Clone the repository:**
     ```bash
     git clone <repository-url>
-    cd backend # In den Backend-Ordner wechseln
+    cd backend # Navigate to the backend folder
     ```
-2.  **Virtuelle Umgebung erstellen (Empfohlen):**
+2.  **Create a virtual environment (recommended):**
     ```bash
     python -m venv venv
     source venv/bin/activate  # Linux/macOS
-    # oder
+    # or
     .\venv\Scripts\activate # Windows
     ```
-3.  **Abhängigkeiten installieren:**
+3.  **Install dependencies:**
     ```bash
     pip install -r requirements.txt
     ```
-    *(Hinweis: `requirements.txt` enthält `aiosqlite`. Wenn du PostgreSQL verwendest, musst du ggf. `psycopg2-binary` oder besser `asyncpg` installieren: `pip install asyncpg` und es zur `requirements.txt` hinzufügen).*
-4.  **Umgebungsvariablen konfigurieren:**
-    * Erstelle eine Datei namens `.env` im `backend`-Verzeichnis.
-    * Füge die Datenbank-URL hinzu.
-        * **Für SQLite (Standard):**
+*(Note: `requirements.txt` includes `aiosqlite`. If you use PostgreSQL, you may need to install `psycopg2-binary` or preferably `asyncpg`: `pip install asyncpg` and add it to `requirements.txt`.)*
+4.  **Configure environment variables:**
+    * Create a file called `.env` in the `backend` directory.
+    * Add the database URL.
+        * **For SQLite (default):**
             ```dotenv
             DATABASE_URL=sqlite+aiosqlite:///./survey_app.db
             ```
-        * **Für PostgreSQL (Beispiel):**
+        * **For PostgreSQL (example):**
             ```dotenv
             DATABASE_URL=postgresql+asyncpg://DEIN_BENUTZER:DEIN_PASSWORT@localhost:5432/DEINE_DB
             ```
-            (Ersetze die Platzhalter entsprechend deiner PostgreSQL-Konfiguration).
-5.  **Datenbank initialisieren (Tabellen erstellen):**
-    * Beim allerersten Start oder nach Änderungen an den `models.py` müssen die Datenbanktabellen erstellt werden.
-    * **Für die Entwicklung:** Du kannst die Funktion `create_db_and_tables` in `database.py` verwenden. Eine Möglichkeit ist, sie einmalig manuell auszuführen oder die entsprechende Zeile im `lifespan`-Manager in `main.py` kurzzeitig einzukommentieren und den Server zu starten.
+            (Replace the placeholders according to your PostgreSQL configuration).
+5.  **Initialize the database (create tables):**
+    * On the very first run or after changes to `models.py`, the database tables must be created.
+    * **For development:** You can use the `create_db_and_tables` function in `database.py`. One approach is to run it manually once or briefly uncomment the line in the `lifespan` manager in `main.py` and start the server.
         ```python
         # In main.py, innerhalb von lifespan, vor yield:
         # await create_db_and_tables()
         ```
-    * **WICHTIG:** Für spätere Änderungen an der Datenbankstruktur in einer Produktionsumgebung sollte ein Migrationstool wie **Alembic** verwendet werden!
+    * **IMPORTANT:** For later changes to the database structure in a production environment, you should use a migration tool such as **Alembic**!
 
-## Anwendung starten (Entwicklung)
+## Start the application (development)
 
-Führe im Terminal (im `backend`-Ordner, mit aktivierter virtueller Umgebung) folgenden Befehl aus:
+Run the following command in a terminal (inside the `backend` folder with the virtual environment activated):
 
 ```bash
 uvicorn app.main:app --reload
