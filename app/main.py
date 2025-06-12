@@ -1150,6 +1150,7 @@ async def export_survey_results_to_csv(
     headers.append(
         "selected_task_group_condition"
     )  # Platzhalter für spätere komplexere Randomisierung
+    headers.append("task_identifiers_seen")
 
     for q_el in question_elements:
         base_q_header = f"q_{q_el.id}"
@@ -1216,6 +1217,7 @@ async def export_survey_results_to_csv(
         total_paste_survey = 0
         total_focus_lost_survey = 0
         responses_map = {str(resp.survey_element_id): resp for resp in p.responses}
+        task_ids_for_participant = set()
 
         for q_el in question_elements:
             q_id_str = str(q_el.id)
@@ -1244,6 +1246,8 @@ async def export_survey_results_to_csv(
                         if response_for_q.llm_chat_history
                         else None
                     )
+                if q_el.task_identifier:
+                    task_ids_for_participant.add(q_el.task_identifier)
             else:
                 row[f"{base_q_header}_response_value_json"] = None
                 row[f"{base_q_header}_displayed_page"] = None
@@ -1267,6 +1271,8 @@ async def export_survey_results_to_csv(
             row["total_paste_count_survey"] = total_paste_survey
         if track_tab_focus:
             row["total_focus_lost_count_survey"] = total_focus_lost_survey
+
+        row["task_identifiers_seen"] = ",".join(sorted(task_ids_for_participant))
 
         writer.writerow(row)
 
