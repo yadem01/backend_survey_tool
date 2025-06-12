@@ -54,3 +54,6 @@ Run the following command in a terminal (inside the `backend` folder with the vi
 ```bash
 uvicorn app.main:app --reload
 ```
+## License
+
+This project is licensed under the [MIT License](LICENSE).
