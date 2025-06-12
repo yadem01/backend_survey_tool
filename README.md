@@ -53,3 +53,7 @@ Führe im Terminal (im `backend`-Ordner, mit aktivierter virtueller Umgebung) fo
 
 ```bash
 uvicorn app.main:app --reload
+```
+## License
+
+This project is licensed under the [MIT License](LICENSE).
