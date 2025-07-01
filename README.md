@@ -25,7 +25,6 @@
     ```bash
     pip install -r requirements.txt
     ```
-*(Note: `requirements.txt` includes `aiosqlite`. If you use PostgreSQL, you may need to install `psycopg2-binary` or preferably `asyncpg`: `pip install asyncpg` and add it to `requirements.txt`.)*
 4.  **Configure environment variables:**
     * Create a file called `.env` in the `backend` directory.
     * Add the database URL.
