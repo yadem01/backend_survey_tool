@@ -59,9 +59,5 @@ async def create_db_and_tables():
     da dies von Alembic übernommen wird. Sie kann für andere initiale DB-Setup-Aufgaben
     verwendet werden, falls nötig, oder leer bleiben.
     """
-    # Der folgende Code sollte entfernt oder auskommentiert werden, wenn Alembic verwendet wird:
-    # async with engine.begin() as conn:
-    #     # await conn.run_sync(Base.metadata.drop_all) # VORSICHT: Löscht alle Tabellen
-    #     await conn.run_sync(Base.metadata.create_all)
     print("Datenbanktabellen würden hier erstellt (jetzt durch Alembic verwaltet).")
     pass

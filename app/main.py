@@ -37,10 +37,6 @@ from . import schemas
 from .database import get_db_session, create_db_and_tables, engine, AsyncSessionFactory
 
 
-# --- Admin Konfiguration ---
-# Beispiel für .env:
-# ADMIN_USERNAME="admin"
-# ADMIN_PASSWORD="password"
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "secret")
 EXPECTED_ADMIN_TOKEN = f"static-admin-token-for-{ADMIN_USERNAME}"
@@ -52,11 +48,9 @@ UPLOAD_DIR = PROJECT_ROOT_DIR / "uploads/images"
 STATIC_FILES_ROUTE = "/static_images"  # Dieser Pfad bleibt relativ zur Domain
 BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://127.0.0.1:8000")
 
-# Upload-Verzeichnis direkt beim Import erstellen, vor app.mount
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 print(f"Upload-Verzeichnis (beim Import) sichergestellt: {UPLOAD_DIR.resolve()}")
 
-# OpenAI API Key laden
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     print(
@@ -67,7 +61,6 @@ if OPENAI_API_KEY:
     openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 
-# --- Lifecycle Events (unverändert) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Anwendung startet...")
@@ -77,10 +70,8 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
-# --- FastAPI App Instanz ---
 app = FastAPI(title="Survey Tool Backend", lifespan=lifespan)
 
-# --- CORS Middleware (WICHTIG für Frontend-Zugriff) ---
 fallback_origins = [
     "http://127.0.0.1:5173",
     "http://localhost:5173",
@@ -110,8 +101,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Static Files Mounten, um Bilder auszuliefern
-# Stellt den Inhalt von UPLOAD_DIR unter dem Pfad STATIC_FILES_ROUTE bereit
 app.mount(STATIC_FILES_ROUTE, StaticFiles(directory=UPLOAD_DIR), name="static_images")
 print(
     f"Statisches Verzeichnis '{UPLOAD_DIR}' wird unter '{STATIC_FILES_ROUTE}' bereitgestellt."
@@ -125,7 +114,6 @@ async def perform_image_cleanup():
 
     async with AsyncSessionFactory() as session:
         try:
-            # 1. Alle verwendeten image_urls aus der Datenbank holen
             stmt = select(models.SurveyElement.image_url).where(
                 models.SurveyElement.image_url.isnot(None)
             )
@@ -136,7 +124,6 @@ async def perform_image_cleanup():
                 f"Hintergrund-Task: Verwendete Bild-URLs (aus DB): {len(used_image_full_urls)}"
             )
 
-            # 2. Alle Dateien im Upload-Verzeichnis auflisten
             if not UPLOAD_DIR.exists():
                 print("Hintergrund-Task: Upload-Verzeichnis nicht gefunden.")
                 return
@@ -146,7 +133,6 @@ async def perform_image_cleanup():
                 f"Hintergrund-Task: Gespeicherte Dateien im Upload-Ordner: {len(stored_files)}"
             )
 
-            # 3. Vergleichen und Löschen
             for file_path_obj in stored_files:
                 # Konstruiere die *volle URL*, wie sie in der DB gespeichert sein sollte
                 # basierend auf dem Dateinamen im Upload-Ordner.
@@ -330,7 +316,6 @@ async def save_survey_results(
 
     participant_start_time_to_use = result_data.participant_start_time or func.now()
 
-    # 1. Erstelle den Teilnehmer-Eintrag
     new_participant = models.SurveyParticipant(
         survey_id=survey_id_extracted,
         prolific_pid=result_data.prolific_pid if survey.prolific_enabled else None,
@@ -341,16 +326,15 @@ async def save_survey_results(
         start_time=participant_start_time_to_use,
         end_time=func.now(),  # Aktuelle Zeit als Endzeit
         completed=True,  # Annahme: Wenn Ergebnisse gesendet werden, ist die Umfrage abgeschlossen
-        page_durations_log=result_data.page_durations_ms
-        if result_data.page_durations_ms
-        else None,
+        page_durations_log=(
+            result_data.page_durations_ms if result_data.page_durations_ms else None
+        ),
     )
     db.add(new_participant)
     await db.flush()  # Um die ID des neuen Teilnehmers zu erhalten
     await db.refresh(new_participant)
     print(f"Teilnehmer erstellt mit ID: {new_participant.id}")
 
-    # 2. Speichere die einzelnen Antworten und zugehörige Chat-Verläufe
     responses_to_add = []
     for survey_element_id_str, answer_value in result_data.answers.items():
         try:
@@ -467,7 +451,6 @@ async def create_survey(
         f"Admin '{admin_user['username']}' erstellt eine neue Umfrage: '{survey_in.title}'"
     )
 
-    # 1. Erstelle den Haupteintrag für die Umfrage
     new_survey = models.Survey(
         title=survey_in.title,
         description=survey_in.survey_description,
@@ -488,7 +471,6 @@ async def create_survey(
     await db.refresh(new_survey)
     print(f"Survey erstellt mit ID: {new_survey.id}")
 
-    # 2. Erstelle die Elemente (Fragen etc.) und verknüpfe sie
     elements_to_add = []
     for element_data in survey_in.questions:
         element_dict = element_data.model_dump()
@@ -500,7 +482,6 @@ async def create_survey(
         db.add_all(elements_to_add)
         print(f"{len(elements_to_add)} Survey-Elemente hinzugefügt.")
 
-    # HIER WIRD DER CLEANUP-TASK HINZUGEFÜGT
     background_tasks.add_task(perform_image_cleanup)
     print(f"Bild-Cleanup-Task für Survey ID {new_survey.id} im Hintergrund gestartet.")
 
@@ -514,9 +495,6 @@ async def get_survey(survey_id: int, db: AsyncSession = Depends(get_db_session))
     Ruft eine spezifische Umfrage und deren Elemente aus der Datenbank ab.
     """
     print(f"Rufe Umfrage mit ID {survey_id} ab...")
-    # Query, um die Umfrage und ihre Elemente zu laden
-    # select(models.Survey).options(selectinload(models.Survey.elements)) lädt Elemente effizient mit
-    # Braucht aber Anpassung im Schema oder man macht separate Abfragen
     result = await db.execute(
         select(models.Survey)
         .options(selectinload(models.Survey.elements))
@@ -567,7 +545,6 @@ async def update_survey(
 ):
     print(f"Admin '{admin_user['username']}' aktualisiert Umfrage ID: {survey_id}")
 
-    # 1. Umfrage aus DB laden
     result = await db.execute(
         select(models.Survey)
         .options(
@@ -582,7 +559,6 @@ async def update_survey(
     if db_survey is None:
         raise HTTPException(status_code=404, detail="Umfrage nicht gefunden")
 
-    # 2. Prüfen, ob Antworten existieren und ggf. löschen
     if db_survey.participants:
         print(
             f"WARNUNG: Umfrage {survey_id} hat {len(db_survey.participants)} Teilnehmer. Zugehörige Antworten und Teilnehmerdaten werden gelöscht."
@@ -590,7 +566,11 @@ async def update_survey(
         for participant in db_survey.participants:
             # Lösche alle Antworten dieses Teilnehmers
             if participant.responses:
-                for response in participant.responses:  # Notwendig, wenn cascade nicht perfekt greift oder für explizite Logik
+                for (
+                    response
+                ) in (
+                    participant.responses
+                ):  # Notwendig, wenn cascade nicht perfekt greift oder für explizite Logik
                     await db.delete(response)
                 await db.flush()  # Stelle sicher, dass Antworten gelöscht sind, bevor Teilnehmer gelöscht wird
             await db.delete(participant)
@@ -599,7 +579,6 @@ async def update_survey(
         db_survey.participants.clear()  # Explizit leeren, um ORM-State zu aktualisieren
         print(f"Alle Teilnehmer und deren Antworten für Umfrage {survey_id} gelöscht.")
 
-    # 3. Felder der Umfrage aktualisieren
     db_survey.title = survey_in.title
     db_survey.description = survey_in.survey_description
     db_survey.config = survey_in.config.model_dump()
@@ -615,7 +594,6 @@ async def update_survey(
     db_survey.max_duration_warning_minutes = survey_in.max_duration_warning_minutes
     db_survey.updated_at = func.now()  # Aktualisiere Zeitstempel
 
-    # 4. Alte Elemente löschen (SQLAlchemy ORM kümmert sich darum, wenn die Beziehung korrekt konfiguriert ist)
     # Es ist sicherer, sie explizit zu löschen, um ORM-Überraschungen zu vermeiden.
     if db_survey.elements:
         print(
@@ -629,7 +607,6 @@ async def update_survey(
         db_survey.elements.clear()  # Leere die Kollektion im ORM
         print(f"Alte Elemente für Survey ID {survey_id} gelöscht.")
 
-    # 5. Neue Elemente erstellen und hinzufügen
     elements_to_add = []
     for element_data in survey_in.questions:
         element_dict = element_data.model_dump(exclude_unset=True)
@@ -711,9 +688,7 @@ async def delete_survey(
         print(f"Lösche {len(db_survey.elements)} Elemente für Survey ID {survey_id}")
         element_ids = [el.id for el in db_survey.elements]
 
-        # ### Breche alle Self-Referencing Foreign Keys ###
-        # Setze `references_element_id` auf NULL für alle Elemente dieser Umfrage,
-        # bevor wir versuchen, sie zu löschen.
+        # Self-Referencing Foreign Keys brechen
         stmt_break_references = (
             update(models.SurveyElement)
             .where(models.SurveyElement.id.in_(element_ids))
@@ -721,7 +696,6 @@ async def delete_survey(
         )
         await db.execute(stmt_break_references)
         print("Self-referencing foreign keys für Elemente der Umfrage entfernt.")
-        # ### ENDE NEUER SCHRITT ###
 
         # Jetzt können alle Elemente sicher gelöscht werden
         stmt_delete_elements = delete(models.SurveyElement).where(
@@ -794,24 +768,26 @@ async def get_survey_results_for_admin(
                 schemas.AnswerDetail(
                     id=resp.id,
                     survey_element_id=resp.survey_element_id,
-                    element_type=survey_element.element_type
-                    if survey_element
-                    else "N/A",
-                    question_type=survey_element.question_type
-                    if survey_element
-                    else None,
-                    question_text=survey_element.question_text
-                    if survey_element
-                    else "Fragetext nicht gefunden",
-                    task_identifier=survey_element.task_identifier
-                    if survey_element
-                    else None,
-                    references_element_id=survey_element.references_element_id
-                    if survey_element
-                    else None,
-                    randomization_group=survey_element.randomization_group
-                    if survey_element
-                    else None,
+                    element_type=(
+                        survey_element.element_type if survey_element else "N/A"
+                    ),
+                    question_type=(
+                        survey_element.question_type if survey_element else None
+                    ),
+                    question_text=(
+                        survey_element.question_text
+                        if survey_element
+                        else "Fragetext nicht gefunden"
+                    ),
+                    task_identifier=(
+                        survey_element.task_identifier if survey_element else None
+                    ),
+                    references_element_id=(
+                        survey_element.references_element_id if survey_element else None
+                    ),
+                    randomization_group=(
+                        survey_element.randomization_group if survey_element else None
+                    ),
                     response_value=resp.response_value,
                     llm_chat_history=resp.llm_chat_history,
                     paste_count=resp.paste_count,
@@ -969,21 +945,31 @@ async def export_all_data_nested(db: AsyncSession = Depends(get_db_session)):
         return schemas.AnswerDetail(
             id=resp_obj.id,
             survey_element_id=resp_obj.survey_element_id,
-            element_type=survey_element_for_resp.element_type
-            if survey_element_for_resp
-            else "N/A",
-            question_type=survey_element_for_resp.question_type
-            if survey_element_for_resp
-            else None,
-            question_text=survey_element_for_resp.question_text
-            if survey_element_for_resp
-            else "Fragetext nicht gefunden",
-            task_identifier=survey_element_for_resp.task_identifier
-            if survey_element_for_resp
-            else None,
-            references_element_id=survey_element_for_resp.references_element_id
-            if survey_element_for_resp
-            else None,
+            element_type=(
+                survey_element_for_resp.element_type
+                if survey_element_for_resp
+                else "N/A"
+            ),
+            question_type=(
+                survey_element_for_resp.question_type
+                if survey_element_for_resp
+                else None
+            ),
+            question_text=(
+                survey_element_for_resp.question_text
+                if survey_element_for_resp
+                else "Fragetext nicht gefunden"
+            ),
+            task_identifier=(
+                survey_element_for_resp.task_identifier
+                if survey_element_for_resp
+                else None
+            ),
+            references_element_id=(
+                survey_element_for_resp.references_element_id
+                if survey_element_for_resp
+                else None
+            ),
             response_value=resp_obj.response_value,
             llm_chat_history=resp_obj.llm_chat_history,
             paste_count=resp_obj.paste_count,
@@ -1099,7 +1085,6 @@ async def export_survey_results_to_csv(
         f"Admin '{admin_user.get('username', 'Unknown')}' requested CSV export for survey ID {survey_id}."
     )
 
-    # 1. Fetch Survey details
     survey_stmt = select(models.Survey).where(models.Survey.id == survey_id)
     survey_result = await db.execute(survey_stmt)
     survey = survey_result.scalar_one_or_none()
@@ -1110,7 +1095,6 @@ async def export_survey_results_to_csv(
     track_tab_focus = getattr(survey, "track_tab_focus", False)
     track_page_duration = getattr(survey, "track_page_duration", False)
 
-    # 2. Fetch all question elements for this survey to define CSV headers
     elements_stmt = (
         select(models.SurveyElement)
         .where(models.SurveyElement.survey_id == survey_id)
@@ -1123,7 +1107,6 @@ async def export_survey_results_to_csv(
         el for el in all_survey_elements if el.element_type == "question"
     ]
 
-    # 3. Define CSV Headers
     headers = [
         "participant_db_id",
         "survey_id",
@@ -1171,7 +1154,6 @@ async def export_survey_results_to_csv(
             per_question_headers.append(f"{base_q_header}_llm_chat_history_json")
         headers.extend(per_question_headers)
 
-    # 4. Fetch all participants and their responses
     participants_stmt = (
         select(models.SurveyParticipant)
         .where(models.SurveyParticipant.survey_id == survey_id)
@@ -1181,7 +1163,6 @@ async def export_survey_results_to_csv(
     participants_result = await db.execute(participants_stmt)
     db_participants = participants_result.scalars().unique().all()
 
-    # 5. Prepare data for CSV
     output = io.StringIO()
     writer = csv.DictWriter(
         output, fieldnames=headers, extrasaction="ignore", quoting=csv.QUOTE_ALL
@@ -1391,7 +1372,9 @@ async def export_survey_results_to_csv_tidy(
                 "consent_given": p.consent_given,
                 "completed": p.completed,
                 "is_test_run": p.is_test_run,
-                "selected_task_group_condition": getattr(p, "selected_task_group_id", None),
+                "selected_task_group_condition": getattr(
+                    p, "selected_task_group_id", None
+                ),
                 "task_identifiers_seen": ",".join(sorted(task_ids_for_participant)),
                 "survey_element_id": q_el.id,
                 "question_text": strip_html_and_decode_entities(q_el.question_text),
@@ -1401,9 +1384,9 @@ async def export_survey_results_to_csv_tidy(
                 "response_value_json": json.dumps(resp.response_value),
                 "displayed_page": resp.displayed_page,
                 "displayed_ordering": resp.displayed_ordering,
-                "llm_chat_history_json": json.dumps(resp.llm_chat_history)
-                if resp.llm_chat_history
-                else None,
+                "llm_chat_history_json": (
+                    json.dumps(resp.llm_chat_history) if resp.llm_chat_history else None
+                ),
             }
 
             if track_copy_paste:
