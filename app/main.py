@@ -432,6 +432,7 @@ async def list_surveys(db: AsyncSession = Depends(get_db_session)):
                 enable_advanced_tracking=getattr(
                     survey, "enable_advanced_tracking", False
                 ),
+                default_target_ratings=survey.default_target_ratings,
             )
         )
     return survey_list_items
@@ -465,6 +466,7 @@ async def create_survey(
         enable_max_duration=survey_in.enable_max_duration,
         max_duration_minutes=survey_in.max_duration_minutes,
         max_duration_warning_minutes=survey_in.max_duration_warning_minutes,
+        default_target_ratings=survey_in.default_target_ratings,
     )
     db.add(new_survey)
     await db.flush()  # Spüle, um die ID der neuen Umfrage zu bekommen
@@ -530,8 +532,103 @@ async def get_survey(survey_id: int, db: AsyncSession = Depends(get_db_session))
         max_duration_warning_minutes=getattr(
             survey, "max_duration_warning_minutes", None
         ),
+        default_target_ratings=getattr(survey, "default_target_ratings", None),
         updated_at=survey.updated_at,
     )
+
+
+# Endpoint to aggregate rating counts per task group
+@app.get(
+    "/api/surveys/{survey_id}/rating-stats",
+    response_model=List[schemas.TaskGroupRatingStat],
+)
+async def get_rating_stats(
+    survey_id: int,
+    randomization_group: Optional[str] = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Return number of ratings per task group for a survey."""
+    survey = await db.execute(
+        select(models.Survey.id).where(models.Survey.id == survey_id)
+    )
+    if survey.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Survey not found")
+
+    stmt = (
+        select(
+            models.SurveyElement.task_identifier,
+            func.count(models.Response.id).label("count"),
+        )
+        .select_from(models.SurveyElement)
+        .outerjoin(
+            models.Response,
+            models.Response.survey_element_id == models.SurveyElement.id,
+        )
+        .where(
+            models.SurveyElement.survey_id == survey_id,
+            models.SurveyElement.task_identifier.isnot(None),
+        )
+    )
+    if randomization_group:
+        stmt = stmt.where(
+            models.SurveyElement.randomization_group == randomization_group
+        )
+    stmt = stmt.group_by(models.SurveyElement.task_identifier)
+    result = await db.execute(stmt)
+    return [
+        {"task_identifier": task_id, "count": count}
+        for task_id, count in result.all()
+    ]
+
+
+# Endpoint to aggregate rating counts per element within task groups
+@app.get(
+    "/api/surveys/{survey_id}/rating-stats/elements",
+    response_model=List[schemas.ElementRatingStat],
+)
+async def get_element_rating_stats(
+    survey_id: int,
+    randomization_group: Optional[str] = None,
+    questions_only: bool = True,
+    distinct_participant: bool = False,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Return number of ratings per element for a survey."""
+    survey = await db.execute(
+        select(models.Survey.id).where(models.Survey.id == survey_id)
+    )
+    if survey.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Survey not found")
+
+    count_expr = (
+        func.count(func.distinct(models.Response.participant_id))
+        if distinct_participant
+        else func.count(models.Response.id)
+    )
+    stmt = (
+        select(models.SurveyElement.id, count_expr.label("count"))
+        .select_from(models.SurveyElement)
+        .outerjoin(
+            models.Response,
+            models.Response.survey_element_id == models.SurveyElement.id,
+        )
+        .where(
+            models.SurveyElement.survey_id == survey_id,
+            models.SurveyElement.task_identifier.isnot(None),
+        )
+    )
+    if randomization_group:
+        stmt = stmt.where(
+            models.SurveyElement.randomization_group == randomization_group
+        )
+    if questions_only:
+        stmt = stmt.where(models.SurveyElement.element_type == "question")
+    stmt = stmt.group_by(models.SurveyElement.id)
+    result = await db.execute(stmt)
+    return [
+        {"element_id": element_id, "count": count}
+        for element_id, count in result.all()
+    ]
 
 
 # Endpunkt zum Aktualisieren einer bestehenden Umfrage
@@ -592,6 +689,7 @@ async def update_survey(
     db_survey.enable_max_duration = survey_in.enable_max_duration
     db_survey.max_duration_minutes = survey_in.max_duration_minutes
     db_survey.max_duration_warning_minutes = survey_in.max_duration_warning_minutes
+    db_survey.default_target_ratings = survey_in.default_target_ratings
     db_survey.updated_at = func.now()  # Aktualisiere Zeitstempel
 
     # Es ist sicherer, sie explizit zu löschen, um ORM-Überraschungen zu vermeiden.

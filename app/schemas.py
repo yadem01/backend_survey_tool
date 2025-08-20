@@ -116,6 +116,7 @@ class SurveyBase(BaseModel):  # Basis für Survey, ohne Validatoren für Create
     enable_max_duration: bool = Field(default=False)
     max_duration_minutes: Optional[int] = Field(default=None, ge=0)
     max_duration_warning_minutes: Optional[int] = Field(default=None, ge=0)
+    default_target_ratings: Optional[int] = Field(default=None, ge=1)
 
 
 class SurveyCreate(SurveyBase):
@@ -163,6 +164,7 @@ class SurveyListItem(BaseModel):
     display_time_spent: bool = Field(default=False)
     enable_max_duration: bool = Field(default=False)
     max_duration_minutes: Optional[int] = None
+    default_target_ratings: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -177,6 +179,17 @@ class SurveyUpdateResponse(BaseModel):
 class SurveyDeleteResponse(BaseModel):
     survey_id: int
     message: str = "Umfrage erfolgreich gelöscht."
+
+
+# Schema for aggregated rating counts per task group
+class TaskGroupRatingStat(BaseModel):
+    task_identifier: str
+    count: int
+
+
+class ElementRatingStat(BaseModel):
+    element_id: int
+    count: int
 
 
 # --- Schemas für Admin Login ---

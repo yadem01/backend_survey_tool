@@ -40,6 +40,9 @@ class Survey(Base):
     max_duration_warning_minutes = Column(
         Integer, nullable=True
     )  # Vorwarnzeit in Minuten
+    default_target_ratings = Column(
+        Integer, nullable=True
+    )  # Optional global default ratings target per survey
 
     # Beziehung zu SurveyElement (eine Umfrage hat viele Elemente)
     elements = relationship(
